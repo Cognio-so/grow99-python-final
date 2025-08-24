@@ -117,7 +117,7 @@ const handleStreamingResponse = async (
           try {
             const data = JSON.parse(line.slice(6));
             onProgress(data);
-          } catch (parseError) {
+          } catch {
             console.warn('[PythonAPI] Failed to parse SSE data:', line);
           }
         }
@@ -616,27 +616,28 @@ const detectAndInstallPackages = async (
 };
 
 // New function to run commands
-const runCommand = async (command: string, sandboxId?: string) => {
-  try {
-    const response = await makeRequest(getApiUrl('/api/run-command'), {
-      method: 'POST',
-      body: JSON.stringify({ command, sandboxId }),
-    });
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// const runCommand = async (command: string, sandboxId?: string) => {
+//   try {
+//     const response = await makeRequest(getApiUrl('/api/run-command'), {
+//       method: 'POST',
+//       body: JSON.stringify({ command, sandboxId }),
+//     });
 
-    if (!response.ok) {
-      return await handleApiError(response, 'runCommand');
-    }
+//     if (!response.ok) {
+//       return await handleApiError(response, 'runCommand');
+//     }
 
-    const data = await response.json();
-    return { ok: true, ...data };
-  } catch (error) {
-    console.error('[PythonAPI] runCommand error:', error);
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : 'Failed to run command'
-    };
-  }
-};
+//     const data = await response.json();
+//     return { ok: true, ...data };
+//   } catch (error) {
+//     console.error('[PythonAPI] runCommand error:', error);
+//     return {
+//       ok: false,
+//       error: error instanceof Error ? error.message : 'Failed to run command'
+//     };
+//   }
+// };
 
 // Enhanced connection test function
 const testConnection = async (): Promise<boolean> => {

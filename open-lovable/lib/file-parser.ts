@@ -244,7 +244,7 @@ export function buildComponentTree(files: Record<string, FileInfo>) {
   }
   
   // Second pass: build relationships
-  for (const [path, fileInfo] of Object.entries(files)) {
+  for (const [, fileInfo] of Object.entries(files)) {
     if (fileInfo.componentInfo && fileInfo.imports) {
       const componentName = fileInfo.componentInfo.name;
       

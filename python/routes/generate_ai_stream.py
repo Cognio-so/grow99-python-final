@@ -295,8 +295,8 @@ class AgentState(TypedDict):
 def get_openai():
     return ChatOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.7,
-        max_tokens=8192,
+        temperature=0.2,
+        max_tokens=12000,
         streaming=True,
         model="gpt-5",
     )
@@ -529,7 +529,6 @@ Apply UI Design Principles WITHIN the schema constraints. Schema requirements ov
 COMPONENT RELATIONSHIPS (CHECK THESE FIRST):
 - Navigation usually lives INSIDE Header.jsx, not separate Nav.jsx
 - Logo is typically in Header, not standalone
-- Footer often contains nav links already
 - Menu/Hamburger is part of Header, not separate
 
 PACKAGE USAGE RULES:
@@ -543,8 +542,7 @@ When recreating/cloning a website, you MUST include:
 1. **Header with Navigation** - Usually Header.jsx containing nav
 2. **Hero Section** - The main landing area (Hero.jsx)
 3. **Main Content Sections** - Features, Services, About, etc.
-4. **Footer** - Contact info, links, copyright (Footer.jsx)
-5. **App.jsx** - Main app component that imports and uses all components
+4. **App.jsx** - Main app component that imports and uses all components
 
 
 
@@ -775,8 +773,7 @@ REQUIRED COMPONENTS for website clones:
 1. Nav.jsx or Header.jsx - Navigation bar with links (NEVER SKIP THIS!)
 2. Hero.jsx - Main landing section
 3. Features/Services/Products sections - Based on the site content
-4. Footer.jsx - Footer with links and info
-5. App.jsx - Main component that imports and arranges all components
+4. App.jsx - Main component that imports and arranges all components
 - NEVER create vite.config.js - it's already configured in the template
 - NEVER create package.json - it's already configured in the template
 
@@ -819,14 +816,13 @@ body {{
 import React from 'react'
 import Header from './components/Header'
 import Hero from './components/Hero'
-import Footer from './components/Footer'
+
 
 function App() {{
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       <Hero />
-      <Footer />
     </div>
   )
 }}

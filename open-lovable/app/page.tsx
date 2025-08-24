@@ -493,7 +493,8 @@ useEffect(() => {
       
     } catch (error) {
       console.error('[handleRedesign] Error:', error);
-      addChatMessage(`Redesign failed: ${error.message}`, 'system');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      addChatMessage(`Redesign failed: ${errorMessage}`, 'system');
       
       // Reset generation progress on error
       setGenerationProgress({

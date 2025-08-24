@@ -109,7 +109,7 @@ export default function AISandboxPage() {
     stage: null
   });
   // Add this after your existing imports and before the component definition
-const isValidUrl = (string) => {
+const isValidUrl = (string: string) => {
   try {
     const url = new URL(string.startsWith('http') ? string : `https://${string}`);
     return url.protocol === "http:" || url.protocol === "https:";

@@ -616,7 +616,7 @@ const detectAndInstallPackages = async (
 };
 
 // New function to run commands
-/* eslint-disable @typescript-eslint/no-unused-vars */
+
 // const runCommand = async (command: string, sandboxId?: string) => {
 //   try {
 //     const response = await makeRequest(getApiUrl('/api/run-command'), {

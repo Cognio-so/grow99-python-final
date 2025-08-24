@@ -61,10 +61,16 @@ export default function AISandboxPage() {
   const [aiEnabled] = useState(true);
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [aiModel, setAiModel] = useState(() => {
+  const [aiModel, setAiModel] = useState(appConfig.ai.defaultModel);
+  
+  // Handle search params in useEffect to avoid SSR issues
+  useEffect(() => {
     const modelParam = searchParams.get('model');
-    return appConfig.ai.availableModels.includes(modelParam || '') ? modelParam! : appConfig.ai.defaultModel;
-  });
+    if (modelParam && appConfig.ai.availableModels.includes(modelParam)) {
+      setAiModel(modelParam);
+    }
+  }, [searchParams]);
+
   const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [urlStatus, setUrlStatus] = useState<string[]>([]);

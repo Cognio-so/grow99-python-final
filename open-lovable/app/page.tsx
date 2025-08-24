@@ -1707,6 +1707,8 @@ const debugSandboxConnection = async () => {
           <div className="relative w-full h-full bg-gray-100">
             <Image 
               src={urlScreenshot} 
+              width={32}
+              height={32}
               alt="Website preview" 
               className="w-full h-full object-contain"
             />
@@ -2957,13 +2959,7 @@ Create a complete, modern React application based on this input. Use your expert
           </button>
           
           {/* Header */}
-          <div className="absolute top-0 left-0 right-0 z-20 px-6 py-4 flex items-center justify-start animate-[fadeIn_0.8s_ease-out]">
-            <Image
-              src="/logo-growth99.svg"
-              alt="Growth 99"
-              className="h-8 w-auto"
-            />
-          </div>
+          
           
           {/* Main content */}
           <div className="relative z-10 h-full flex items-center justify-center px-4">
@@ -3166,11 +3162,7 @@ Create a complete, modern React application based on this input. Use your expert
       
       <div className="bg-card px-4 py-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Image
-            src="/logo-growth99.svg"
-            alt="Growth 99"
-            className="h-8 w-auto"
-          />
+        
         </div>
         <div className="flex items-center gap-2">
           {/* Model Selector - Left side */}
@@ -3248,23 +3240,41 @@ Create a complete, modern React application based on this input. Use your expert
                   
                   return (
                     <div key={idx} className="flex items-center gap-2 text-sm">
-                      <Image
-                        src={favicon} 
-                        alt={siteName}
-                        className="w-4 h-4 rounded"
-                        onError={(e) => {
-                          e.currentTarget.src = `https://www.google.com/s2/favicons?domain=${new URL(sourceURL).hostname}&sz=32`;
-                        }}
-                      />
-                      <a 
-                        href={sourceURL} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-black hover:text-gray-700 truncate max-w-[250px]"
-                        title={sourceURL}
-                      >
-                        {siteName}
-                      </a>
+                      {/* <Image
+  src={(() => {
+    try {
+      // Only try to get favicon if sourceURL is a valid URL
+      if (sourceURL && sourceURL.startsWith('http')) {
+        return `https://www.google.com/s2/favicons?domain=${new URL(sourceURL).hostname}&sz=32`;
+      }
+    } catch (e) {
+      // If URL parsing fails, fall back to default icon
+    }
+    // For text descriptions, use a default icon
+    return '/file.svg';
+  })()}
+  width={32}
+  height={32}
+  alt={siteName}
+  className="w-4 h-4 rounded"
+  onError={(e) => {
+    e.currentTarget.src = '/file.svg';
+  }}
+/> */}
+<a 
+  href={sourceURL.startsWith('http') ? sourceURL : '#'} 
+  target="_blank" 
+  rel="noopener noreferrer"
+  className="text-black hover:text-gray-700 truncate max-w-[250px]"
+  title={sourceURL}
+  onClick={(e) => {
+    if (!sourceURL.startsWith('http')) {
+      e.preventDefault(); // Prevent navigation for text descriptions
+    }
+  }}
+>
+  {siteName}
+</a>
                     </div>
                   );
                 })}

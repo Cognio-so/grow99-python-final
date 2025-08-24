@@ -392,7 +392,7 @@ function getSuggestedContext(
   return allFiles.filter(file => !targetFiles.includes(file));
 }
 
-/* eslint-disable @typescript-eslint/no-unused-vars */
+
 // function resolveImportPath(
 //   fromFile: string,
 //   importPath: string,
@@ -418,7 +418,7 @@ function getSuggestedContext(
 //       }
 //     }
 //   }
-/* eslint-disable @typescript-eslint/no-unused-vars */  
+
 //   // Handle @/ alias (common in Vite projects)
 //   if (importPath.startsWith('@/')) {
 //     const srcPath = importPath.replace('@/', '/home/user/app/src/');

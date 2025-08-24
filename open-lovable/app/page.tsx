@@ -1,5 +1,5 @@
 'use client';
-
+import Image from 'next/image';
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { appConfig } from '@/config/app.config';
@@ -209,7 +209,7 @@ useEffect(() => {
       captureUrlScreenshot(screenshotUrl);
     }
   }
-}, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps// eslint-disable-line react-hooks/exhaustive-deps
+}, [showHomeScreen, homeUrlInput]); 
 
 
   useEffect(() => {
@@ -223,8 +223,7 @@ useEffect(() => {
     
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
+  }, []);
   useEffect(() => {
     if (chatMessagesRef.current) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
@@ -1706,7 +1705,7 @@ const debugSandboxConnection = async () => {
       if (urlScreenshot && (loading || generationProgress.isGenerating || !sandboxData?.url || isPreparingDesign)) {
         return (
           <div className="relative w-full h-full bg-gray-100">
-            <img 
+            <Image 
               src={urlScreenshot} 
               alt="Website preview" 
               className="w-full h-full object-contain"
@@ -2959,7 +2958,7 @@ Create a complete, modern React application based on this input. Use your expert
           
           {/* Header */}
           <div className="absolute top-0 left-0 right-0 z-20 px-6 py-4 flex items-center justify-start animate-[fadeIn_0.8s_ease-out]">
-            <img
+            <Image
               src="/logo-growth99.svg"
               alt="Growth 99"
               className="h-8 w-auto"
@@ -3167,7 +3166,7 @@ Create a complete, modern React application based on this input. Use your expert
       
       <div className="bg-card px-4 py-4 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <img
+          <Image
             src="/logo-growth99.svg"
             alt="Growth 99"
             className="h-8 w-auto"
@@ -3249,7 +3248,7 @@ Create a complete, modern React application based on this input. Use your expert
                   
                   return (
                     <div key={idx} className="flex items-center gap-2 text-sm">
-                      <img 
+                      <Image
                         src={favicon} 
                         alt={siteName}
                         className="w-4 h-4 rounded"

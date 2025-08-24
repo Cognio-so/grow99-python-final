@@ -162,9 +162,9 @@ export function useAiCodeGeneration() {
     context: any,
     isEdit: boolean = false
   ) => {
-    return streamingApi.execute((options) =>
-      pythonApi.generateAiCode(prompt, model, context, isEdit, options)
-    );
+    return streamingApi.execute(async (options) => {
+      await pythonApi.generateAiCode(prompt, model, context, isEdit);
+    });
   }, [streamingApi]);
 
   const applyCode = useCallback((
@@ -173,9 +173,9 @@ export function useAiCodeGeneration() {
     packages: string[] = [],
     sandboxId?: string
   ) => {
-    return streamingApi.execute((options) =>
-      pythonApi.applyAiCode(response, isEdit, packages, sandboxId, options)
-    );
+    return streamingApi.execute(async (options) => {
+      await pythonApi.applyAiCode(response, isEdit, packages, sandboxId);
+    });
   }, [streamingApi]);
 
   const analyzeEditIntent = useCallback((
@@ -201,15 +201,15 @@ export function usePackages() {
   const streamingApi = useStreamingApi();
 
   const installPackages = useCallback((packages: string[]) => {
-    return streamingApi.execute((options) =>
-      pythonApi.installPackages(packages, options)
-    );
+    return streamingApi.execute(async (options) => {
+      await pythonApi.installPackages(packages, options);
+    });
   }, [streamingApi]);
 
   const detectAndInstallPackages = useCallback((code: string) => {
-    return streamingApi.execute((options) =>
-      pythonApi.detectAndInstallPackages(code, options)
-    );
+    return streamingApi.execute(async (options) => {
+      await pythonApi.detectAndInstallPackages(code, options);
+    });
   }, [streamingApi]);
 
   return {
@@ -229,7 +229,7 @@ export function useConversationState() {
     return executeApi(() => pythonApi.getConversationState());
   }, [executeApi]);
 
-  const updateState = useCallback((action: string, data?: any) => {
+  const updateState = useCallback((action: 'reset' | 'clear-old' | 'update', data?: any) => {
     return executeApi(() => pythonApi.updateConversationState(action, data));
   }, [executeApi]);
 

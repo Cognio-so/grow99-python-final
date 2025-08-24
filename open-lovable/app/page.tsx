@@ -1,7 +1,9 @@
 'use client';
+import { Suspense } from 'react';
+import { SearchParamsProvider } from './search-params-provider';
 import Image from 'next/image';
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { appConfig } from '@/config/app.config';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -43,7 +45,7 @@ interface ChatMessage {
   };
 }
 
-export default function AISandboxPage() {
+function AISandboxPageContent({ searchParams }: { searchParams: URLSearchParams }) {
   const [sandboxData, setSandboxData] = useState<SandboxData | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState({ text: 'Not connected', active: false });
@@ -59,7 +61,6 @@ export default function AISandboxPage() {
   ]);
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiEnabled] = useState(true);
-  const searchParams = useSearchParams();
   const router = useRouter();
   const [aiModel, setAiModel] = useState(appConfig.ai.defaultModel);
   
@@ -3629,5 +3630,15 @@ Create a complete, modern React application based on this input. Use your expert
 
 
     </div>
+  );
+}
+
+export default function AISandboxPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SearchParamsProvider>
+        {(searchParams) => <AISandboxPageContent searchParams={searchParams} />}
+      </SearchParamsProvider>
+    </Suspense>
   );
 }

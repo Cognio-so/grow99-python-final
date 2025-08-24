@@ -1180,7 +1180,7 @@ const fetchSandboxFiles = async () => {
 
           return {
             path: relativePath,
-            content: content,
+            content: String(content), // Convert content to string to fix type compatibility
             type: fileType,
             completed: true,
             edited: false

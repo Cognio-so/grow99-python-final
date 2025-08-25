@@ -49,7 +49,7 @@ def load_design_schemas():
             
             for row in reader:
                 row_count += 1
-                print(f"[schema] Processing row {row_count}")
+                # print(f"[schema] Processing row {row_count}")
                 
                 schema_json = row.get('JSON SCHEMA', '').strip()
                 if not schema_json:

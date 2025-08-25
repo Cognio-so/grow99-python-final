@@ -15,46 +15,16 @@ except Exception as _e:
     raise
 
 # E2B SDK imports with better error handling
-# E2B SDK imports - force correct package
-import sys
-
-# Clear any existing e2b imports to avoid conflicts
-modules_to_remove = [k for k in sys.modules.keys() if k.startswith('e2b') and k != 'e2b_code_interpreter']
-for module in modules_to_remove:
-    del sys.modules[module]
-
 try:
-    import e2b_code_interpreter
-    from e2b_code_interpreter import Sandbox
+    from e2b_code_interpreter import Sandbox as E2BSandbox
     SDK_TYPE = "code_interpreter"
-    print(f"[E2B] Imported from {e2b_code_interpreter.__file__}")
-except Exception as e:
-    Sandbox = None
-    SDK_TYPE = "code_interpreter"
-    print(f"[E2B] Import failed: {e}")
-
-import inspect as _inspect
-
-def make_sandbox(api_key: str):
-    """
-    Works with both v2 (Sandbox(api_key=...)) and older v1 (Sandbox(opts)).
-    """
-    if Sandbox is None:
-        raise RuntimeError("E2B Sandbox not available. Check package install / version.")
-
-    sig = _inspect.signature(Sandbox.__init__)
-    params = list(sig.parameters.keys())
-    # v1 has 'opts'; v2 has 'api_key'
-    if "opts" in params and "api_key" not in params:
-        class _Opts:
-            def __init__(self, api_key):
-                self.api_key = api_key
-                self.on_stdout = None
-                self.on_stderr = None
-                self.keep_alive = True
-        return Sandbox(_Opts(api_key))
-    else:
-        return Sandbox(api_key=api_key)
+except Exception:
+    try:
+        from e2b import Sandbox as E2BSandbox
+        SDK_TYPE = "legacy"
+    except Exception:
+        E2BSandbox = None
+        SDK_TYPE = None
 
 # App config
 try:
@@ -651,16 +621,13 @@ async def POST() -> Dict[str, Any]:
         # Create base sandbox
         print(f"[create-ai-sandbox] Creating base E2B sandbox with {appConfig.e2b.timeoutMinutes} minute timeout...")
         
-        # if E2BSandbox is None:
-        #     raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
+        if E2BSandbox is None:
+            raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
 
-        api_key = os.getenv("E2B_API_KEY")
-        if not api_key:
-            raise RuntimeError("E2B_API_KEY environment variable is required")
-
-        sandbox = make_sandbox(api_key)
-
-        print(f"[create-ai-sandbox] Sandbox created with API key: {api_key[:8]}...")
+        try:
+            sandbox = E2BSandbox(api_key=os.getenv("E2B_API_KEY"))
+        except TypeError:
+            sandbox = E2BSandbox()
 
         # Set timeout if supported
         set_timeout = getattr(sandbox, "set_timeout", None) or getattr(sandbox, "setTimeout", None)

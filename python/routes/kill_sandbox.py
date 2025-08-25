@@ -1,6 +1,6 @@
 from typing import Any, Dict, Set, Optional
 import sys
-from routes.state_manager import save_state
+# from routes.state_manager import save_state
 
 # Global variables to match TypeScript globals
 active_sandbox: Optional[Any] = None

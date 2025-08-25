@@ -1,82 +1,53 @@
-# routes/state_manager.py
 import json
 import os
-from pathlib import Path
-from typing import Any, Dict
+from filelock import FileLock, Timeout  # MODIFIED: Use the cross-platform filelock library
+from typing import Optional, Dict, Any
 
-# --- Project Paths ---
-ROOT = Path(__file__).parent.parent.resolve()
-STATE_FILE = ROOT / "state.json"
+STATE_FILE_PATH = '/tmp/g99_sandbox_state.json'
+# Define a separate lock file path; this is standard practice
+LOCK_FILE_PATH = '/tmp/g99_sandbox_state.json.lock'
 
-def save_state(modules: Dict[str, Any]):
+
+def get_sandbox_state() -> Optional[Dict[str, Any]]:
     """
-    Saves the critical global state from various modules to a single JSON file.
+    Reads the current sandbox state from the centralized file in a process-safe way.
+    Returns None if no state exists.
     """
-    print("[state_manager] 💾 Saving application state...")
+    lock = FileLock(LOCK_FILE_PATH, timeout=5)
     try:
-        state_to_save = {}
-        
-        # Extract state from create_ai_sandbox or sandbox_status
-        # These modules hold the primary sandbox state
-        sandbox_provider = modules.get("create_ai_sandbox") or modules.get("sandbox_status")
-        if sandbox_provider:
-            state_to_save["sandbox_data"] = getattr(sandbox_provider, "sandbox_data", None)
-            state_to_save["existing_files"] = list(getattr(sandbox_provider, "existing_files", set()))
-        
-        # Extract state from conversation_state
-        convo_provider = modules.get("conversation_state")
-        if convo_provider and hasattr(convo_provider, "conversation_state"):
-            convo_state = getattr(convo_provider, "conversation_state", None)
-            if convo_state:
-                state_to_save["conversation_state"] = convo_state.model_dump()
+        # Create the /tmp directory if it doesn't exist (useful for Windows)
+        os.makedirs(os.path.dirname(STATE_FILE_PATH), exist_ok=True)
 
-        with open(STATE_FILE, "w") as f:
-            json.dump(state_to_save, f, indent=2)
-            
-        print(f"[state_manager] ✅ State successfully saved to {STATE_FILE}")
+        if not os.path.exists(STATE_FILE_PATH):
+            return None
         
-    except Exception as e:
-        print(f"[state_manager] ❌ Error saving state: {e}")
+        with lock:
+            with open(STATE_FILE_PATH, 'r') as f:
+                state = json.load(f)
+        
+        if state and state.get('active'):
+            return state
+        return None
+    except (IOError, json.JSONDecodeError, KeyError, Timeout):
+        # Timeout happens if the lock can't be acquired
+        return None
 
-
-def load_state(modules: Dict[str, Any]):
+def set_sandbox_state(state: Optional[Dict[str, Any]]):
     """
-    Loads the state from the JSON file and re-populates the globals in all relevant modules.
+    Writes the sandbox state to the centralized file in a process-safe way.
+    Pass None to clear the state.
     """
-    if not os.path.exists(STATE_FILE):
-        print("[state_manager] No state file found, starting fresh.")
-        return
-
-    print(f"[state_manager] 💾 Loading application state from {STATE_FILE}...")
+    lock = FileLock(LOCK_FILE_PATH, timeout=5)
     try:
-        with open(STATE_FILE, "r") as f:
-            loaded_state = json.load(f)
+        # Create the /tmp directory if it doesn't exist
+        os.makedirs(os.path.dirname(STATE_FILE_PATH), exist_ok=True)
 
-        # Re-populate conversation state
-        if "conversation_state" in loaded_state and modules.get("conversation_state"):
-            from .conversation_state import ConversationStateModel # Local import to avoid circular dependency issues
-            convo_module = modules["conversation_state"]
-            try:
-                convo_module.conversation_state = ConversationStateModel(**loaded_state["conversation_state"])
-                print("[state_manager] ✅ Conversation state restored.")
-            except Exception as e:
-                print(f"[state_manager] ⚠️ Could not restore conversation state: {e}")
-
-        # Data to be synced across all modules
-        sync_data = {
-            "sandbox_data": loaded_state.get("sandbox_data"),
-            "existing_files": set(loaded_state.get("existing_files", [])),
-            # active_sandbox itself is not saved, it must be reconnected if needed.
-            # We just load the *data* about it.
-        }
-
-        # Distribute the loaded state to all modules
-        for module_name, module in modules.items():
-            for key, value in sync_data.items():
-                if hasattr(module, key):
-                    setattr(module, key, value)
-        
-        print("[state_manager] ✅ Sandbox data and file lists restored.")
-
-    except Exception as e:
-        print(f"[state_manager] ❌ Error loading state: {e}")
+        with lock:
+            with open(STATE_FILE_PATH, 'w') as f:
+                if state:
+                    state['active'] = True
+                    json.dump(state, f, indent=2)
+                else:
+                    json.dump({"active": False, "sandboxId": None, "url": None}, f)
+    except (IOError, Timeout) as e:
+        print(f"[state_manager] Error writing state file: {e}")

@@ -19,3 +19,4 @@ sse-starlette
 streamlit
 python-multipart
 Pillow
+filelock

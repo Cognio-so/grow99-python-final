@@ -1,4 +1,4 @@
-# create_ai_sandbox.py - FIXED with complete Tailwind CSS setup (exact copy from TS)
+# create_ai_sandbox.py - FIXED with complete Tailwind CSS setup and state persistence
 
 from typing import Any, Dict, Optional, Set
 import os
@@ -80,21 +80,6 @@ async def _run_in_sandbox(sandbox: Any, code: str) -> Dict[str, Any]:
             return {"output": f"Error: {str(e)}", "success": False}
 
     chain = RunnableLambda(_runner)
-
-    def _compile_graph():
-        g = StateGraph(dict)
-        async def exec_node(state: Dict[str, Any]) -> Dict[str, Any]:
-            return await chain.ainvoke(state)
-        g.add_node("exec", exec_node)
-        g.add_edge(START, "exec")
-        g.add_edge("exec", END)
-        return g.compile()
-
-    # if not hasattr(_run_in_sandbox, "_graph"):
-    #     _run_in_sandbox._graph = _compile_graph()
-
-    # graph = _run_in_sandbox._graph
-    # return await graph.ainvoke({"code": code})
     return await chain.ainvoke({"code": code})
 
 def _extract_output_text(result: Any) -> str:
@@ -122,6 +107,51 @@ def _extract_output_text(result: Any) -> str:
         return str(result.output or "")
     
     return ""
+
+async def verify_and_fix_url(sandbox, sandbox_id):
+    """Verify URL works and fix if needed"""
+    possible_urls = [
+        f"https://5173-{sandbox_id}.e2b.app",
+        f"https://5173-{sandbox_id}.e2b.dev", 
+        f"https://{sandbox_id}.e2b.app:5173",
+        f"https://{sandbox_id}.e2b.dev:5173"
+    ]
+    
+    # Test each URL
+    test_code = '''
+import requests
+import json
+
+results = {}
+'''
+    
+    for url in possible_urls:
+        test_code += f'''
+try:
+    resp = requests.get("{url}", timeout=5)
+    results["{url}"] = {{"status": resp.status_code, "accessible": True}}
+except Exception as e:
+    results["{url}"] = {{"error": str(e), "accessible": False}}
+'''
+    
+    test_code += '''
+print(json.dumps(results))
+'''
+    
+    try:
+        result = await _run_in_sandbox(sandbox, test_code)
+        output = _extract_output_text(result)
+        
+        url_results = json.loads(output)
+        for url, data in url_results.items():
+            if data.get("accessible") and data.get("status") == 200:
+                print(f"[verify_url] Found working URL: {url}")
+                return url
+    except Exception as e:
+        print(f"[verify_url] URL verification failed: {e}")
+    
+    # Return first URL as fallback
+    return possible_urls[0]
 
 async def get_correct_sandbox_url(sandbox: Any, sandbox_id: str) -> str:
     """FIXED: Get the correct accessible E2B URL with verification"""
@@ -161,8 +191,8 @@ async def get_correct_sandbox_url(sandbox: Any, sandbox_id: str) -> str:
         possible_urls.append(url)
         print(f"[get_sandbox_url] Method 3 - format: {url}")
     
-    # Return the first URL for now - we'll verify it works later
-    final_url = possible_urls[0] if possible_urls else f"https://{sandbox_id}.e2b.dev"
+    # Verify URL accessibility
+    final_url = await verify_and_fix_url(sandbox, sandbox_id)
     print(f"[get_sandbox_url] Selected URL: {final_url}")
     return final_url
 
@@ -443,7 +473,7 @@ with open('/home/user/app/src/index.css', 'w') as f:
     f.write(index_css)
 print('✓ src/index.css')
 
-print('\\n✅ All files created successfully!')
+print('\\nâœ… All files created successfully!')
 '''
 
     await _run_in_sandbox(sandbox, setup_script)
@@ -602,6 +632,34 @@ async def _get_sandbox_id_compat(sandbox):
 
     raise AttributeError("Could not determine sandbox id from SDK.")
 
+def save_sandbox_state_to_file(sandbox_id, url, files):
+    """Save sandbox state to persistent storage"""
+    try:
+        state_data = {
+            "sandboxId": sandbox_id,
+            "url": url, 
+            "files": list(files),
+            "timestamp": int(time.time() * 1000),
+            "active": True
+        }
+        with open('/tmp/g99_sandbox.json', 'w') as f:
+            json.dump(state_data, f)
+        print(f"[save_state] Saved sandbox state: {sandbox_id}")
+    except Exception as e:
+        print(f"[save_state] Failed to save state: {e}")
+
+def load_sandbox_state_from_file():
+    """Load sandbox state from persistent storage"""
+    try:
+        if os.path.exists('/tmp/g99_sandbox.json'):
+            with open('/tmp/g99_sandbox.json', 'r') as f:
+                state_data = json.load(f)
+            print(f"[load_state] Found saved sandbox: {state_data.get('sandboxId')}")
+            return state_data
+    except Exception as e:
+        print(f"[load_state] Failed to load state: {e}")
+    return None
+
 async def POST() -> Dict[str, Any]:
     """Enhanced sandbox creation with COMPLETE Tailwind CSS setup"""
     global active_sandbox, sandbox_data, existing_files, sandbox_state
@@ -663,22 +721,17 @@ async def POST() -> Dict[str, Any]:
             print("[create-ai-sandbox] ⚠️ CRITICAL ERROR: Vite + Tailwind setup failed!")
             print("[create-ai-sandbox] ⚠️ Website styling may not work properly!")
 
-        # The URL can be constructed from the sandbox ID
+        # The URL can be constructed from the sandbox ID - FIXED WITH VERIFICATION
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
         sandbox_data.update({"url": sandbox_url})
-        # Persist sandbox info to a file for rehydration after process restarts (for Render)
-        try:
-            with open('/tmp/g99_sandbox.json', 'w') as f:
-                json.dump({"sandboxId": sandbox_id, "url": sandbox_url, "ts": int(time.time()*1000)}, f)
-        except Exception as e:
-            print("warn: failed to persist sandbox file:", e)
-
-        # Store sandbox globally
-        active_sandbox = sandbox
-        sandbox_data = {
-            "sandboxId": sandbox_id,
-            "url": sandbox_url,
-        }
+        
+        # Track initial files
+        for path in [
+            "src/App.jsx", "src/main.jsx", "src/index.css",
+            "index.html", "package.json", "vite.config.mjs",
+            "tailwind.config.js", "postcss.config.js",
+        ]:
+            existing_files.add(path)
 
         # Initialize sandbox state
         sandbox_state = {
@@ -694,13 +747,15 @@ async def POST() -> Dict[str, Any]:
             },
         }
 
-        # Track initial files
-        for path in [
-            "src/App.jsx", "src/main.jsx", "src/index.css",
-            "index.html", "package.json", "vite.config.mjs",
-            "tailwind.config.js", "postcss.config.js",
-        ]:
-            existing_files.add(path)
+        # CRITICAL: Save state to persistent storage
+        save_sandbox_state_to_file(sandbox_id, sandbox_url, existing_files)
+
+        # Store sandbox globally
+        active_sandbox = sandbox
+        sandbox_data = {
+            "sandboxId": sandbox_id,
+            "url": sandbox_url,
+        }
 
         print("[create-ai-sandbox] ✅ SUCCESS: Sandbox ready with COMPLETE Tailwind CSS setup!")
         print(f"[create-ai-sandbox] URL: {sandbox_url}")
@@ -735,3 +790,68 @@ async def POST() -> Dict[str, Any]:
             "success": False,
             "status": 500,
         }
+
+async def recover_sandbox_state():
+    """Try to recover sandbox state from persistent storage"""
+    global active_sandbox, sandbox_data, existing_files, sandbox_state
+    
+    try:
+        saved_state = load_sandbox_state_from_file()
+        if saved_state and saved_state.get('active'):
+            sandbox_id = saved_state.get('sandboxId')
+            url = saved_state.get('url')
+            files = saved_state.get('files', [])
+            
+            if sandbox_id:
+                print(f"[recovery] Attempting to recover sandbox: {sandbox_id}")
+                
+                try:
+                    # Try to reconnect to existing sandbox
+                    api_key = os.getenv("E2B_API_KEY")
+                    
+                    if hasattr(E2BSandbox, 'connect'):
+                        if inspect.iscoroutinefunction(E2BSandbox.connect):
+                            sandbox = await E2BSandbox.connect(sandbox_id, api_key=api_key)
+                        else:
+                            sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key)
+                    else:
+                        # Fallback: create new sandbox if connect not available
+                        if inspect.iscoroutinefunction(E2BSandbox.create):
+                            sandbox = await E2BSandbox.create(api_key=api_key)
+                        else:
+                            sandbox = E2BSandbox.create(api_key=api_key)
+                        sandbox_id = await _get_sandbox_id_compat(sandbox)
+                    
+                    # Restore state
+                    active_sandbox = sandbox
+                    sandbox_data = {"sandboxId": sandbox_id, "url": url}
+                    existing_files = set(files)
+                    
+                    sandbox_state = {
+                        "fileCache": {
+                            "files": {},
+                            "lastSync": int(time.time() * 1000),
+                            "sandboxId": sandbox_id,
+                        },
+                        "sandbox": sandbox,
+                        "sandboxData": {
+                            "sandboxId": sandbox_id,
+                            "url": url,
+                        },
+                    }
+                    
+                    print(f"[recovery] Successfully recovered sandbox: {sandbox_id}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"[recovery] Failed to recover sandbox: {e}")
+                    # Clear invalid state
+                    try:
+                        os.remove('/tmp/g99_sandbox.json')
+                    except:
+                        pass
+                    
+    except Exception as e:
+        print(f"[recovery] Recovery failed: {e}")
+    
+    return False

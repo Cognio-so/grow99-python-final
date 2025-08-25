@@ -40,7 +40,16 @@ async def POST() -> Dict[str, Any]:
         # if main_app and hasattr(main_app, "MODULES"):
         #     save_state(main_app.MODULES)
         # # ----------------------------
-        
+        try:
+            # Clear the persistent state file
+            import os
+            state_files = ['/tmp/g99_sandbox.json', '/tmp/g99_conversation_state.json']
+            for state_file in state_files:
+                if os.path.exists(state_file):
+                    os.remove(state_file)
+                    print(f"[kill-sandbox] Cleared {state_file}")
+        except Exception as e:
+            print(f"[kill-sandbox] Failed to clear state files: {e}")
         return {
             "success": True,
             "sandboxKilled": sandbox_killed,

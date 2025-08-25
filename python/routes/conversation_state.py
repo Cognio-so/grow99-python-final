@@ -80,6 +80,19 @@ def _post_compute(payload: Dict[str, Any]) -> Dict[str, Any]:
         #     if main_app and hasattr(main_app, "MODULES"):
         #         save_state(main_app.MODULES)
         # # --------------------------------------------
+        if response.get("success"):  # <-- response exists here
+            try:
+                # Simple state persistence without save_state function
+                import json
+                import time
+                state_file = '/tmp/g99_conversation_state.json'
+                with open(state_file, 'w') as f:
+                    json.dump({
+                        "conversation_state": conversation_state.model_dump() if conversation_state else None,
+                        "timestamp": int(time.time() * 1000)
+                    }, f)
+            except Exception as e:
+                print(f"[conversation-state] Failed to persist state: {e}")
         return response
         
     except Exception as e:
@@ -95,6 +108,7 @@ def _delete_compute(_: Dict[str, Any]) -> Dict[str, Any]:
         # if main_app and hasattr(main_app, "MODULES"):
         #     save_state(main_app.MODULES)
         # # ----------------------------
+        
         print("[conversation-state] Cleared conversation state")
         return {"success": True, "message": "Conversation state cleared"}
     except Exception as e:

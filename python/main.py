@@ -15,7 +15,6 @@ import uvicorn
 import inspect
 import json
 import traceback
-from routes.state_manager import load_state, save_state
 
 # --- Project Paths ---
 ROOT = Path(__file__).parent.resolve()
@@ -85,74 +84,168 @@ def _load_all():
 
 _load_all()
 
-# --- Global State Synchronization ---
+# --- Global State Synchronization - FIXED ---
 SHARED_ATTRS = ("active_sandbox", "sandbox_state", "sandbox_data", "existing_files", "conversation_state")
 
 async def sync_globals():
     try:
-        # Priority order for source of truth
-        sources = [
-            ("apply_ai_code_stream", MODULES.get("apply_ai_code_stream")),
-            ("get_sandbox_files", MODULES.get("get_sandbox_files")), 
-            ("create_ai_sandbox", MODULES.get("create_ai_sandbox")),
-            ("sandbox_status", MODULES.get("sandbox_status"))
-        ]
-        
-        # Find the module with the most complete state
+        # Find the primary source - module that actually has an active sandbox
         primary_source = None
         source_name = None
         
-        for name, module in sources:
-            if module and hasattr(module, "sandbox_state"):
-                sandbox_state = getattr(module, "sandbox_state", None)
-                if sandbox_state and isinstance(sandbox_state, dict):
-                    # Prefer modules that have file cache
-                    if sandbox_state.get("fileCache"):
-                        primary_source = module
-                        source_name = name
-                        print(f"[sync] Using {name} as primary source (has fileCache)")
-                        break
-                    elif not primary_source:
-                        primary_source = module
-                        source_name = name
+        # Check for modules with active sandbox first
+        for name, module in MODULES.items():
+            if module and hasattr(module, "active_sandbox"):
+                sandbox = getattr(module, "active_sandbox", None)
+                if sandbox is not None:
+                    primary_source = module
+                    source_name = name
+                    print(f"[sync] Using {name} as primary source (has active_sandbox)")
+                    break
+        
+        # Fallback: check for modules with sandbox_state that has fileCache
+        if not primary_source:
+            for name, module in MODULES.items():
+                if module and hasattr(module, "sandbox_state"):
+                    sandbox_state = getattr(module, "sandbox_state", None)
+                    if sandbox_state and isinstance(sandbox_state, dict):
+                        if sandbox_state.get("fileCache"):
+                            primary_source = module
+                            source_name = name
+                            print(f"[sync] Using {name} as primary source (has fileCache)")
+                            break
         
         if not primary_source:
             print("[sync] No primary source found")
             return
         
-        # Get all sync data from primary source
-        sync_data = {}
-        for attr in SHARED_ATTRS:
-            if hasattr(primary_source, attr):
-                value = getattr(primary_source, attr)
-                if value is not None:
-                    sync_data[attr] = value
+        # Get the active sandbox and related data from primary source
+        active_sandbox_value = getattr(primary_source, "active_sandbox", None)
+        sandbox_data_value = getattr(primary_source, "sandbox_data", None)
+        existing_files_value = getattr(primary_source, "existing_files", set())
+        sandbox_state_value = getattr(primary_source, "sandbox_state", None)
         
-        # Distribute to all other modules
+        # Sync to ALL modules that need these values
         synced_count = 0
-        for module_name, module in MODULES.items():
-            if module == primary_source:
-                continue
+        target_modules = [
+            "create_ai_sandbox", "apply_ai_code_stream", "get_sandbox_files", 
+            "sandbox_status", "restart_vite", "kill_sandbox", "sandbox_logs"
+        ]
+        
+        for module_name in target_modules:
+            module = MODULES.get(module_name)
+            if module and module != primary_source:
+                # Sync active_sandbox
+                if hasattr(module, "active_sandbox"):
+                    setattr(module, "active_sandbox", active_sandbox_value)
+                    synced_count += 1
                 
-            for attr, value in sync_data.items():
-                if hasattr(module, attr):
-                    setattr(module, attr, value)
+                # Sync sandbox_data
+                if hasattr(module, "sandbox_data"):
+                    setattr(module, "sandbox_data", sandbox_data_value)
+                    synced_count += 1
+                
+                # Sync existing_files
+                if hasattr(module, "existing_files"):
+                    setattr(module, "existing_files", existing_files_value)
+                    synced_count += 1
+                
+                # Sync sandbox_state
+                if hasattr(module, "sandbox_state"):
+                    setattr(module, "sandbox_state", sandbox_state_value)
                     synced_count += 1
         
-        print(f"[sync] Synced {synced_count} attributes from {source_name} to {len(MODULES)-1} modules")
+        print(f"[sync] Synced {synced_count} attributes from {source_name} to {len(target_modules)-1} modules")
         
     except Exception as e:
         print(f"[sync] Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+async def recover_sandbox_state():
+    """Try to recover sandbox state from persistent storage"""
+    try:
+        # Check if we have a saved sandbox
+        if os.path.exists('/tmp/g99_sandbox.json'):
+            with open('/tmp/g99_sandbox.json', 'r') as f:
+                saved_data = json.load(f)
+            
+            sandbox_id = saved_data.get('sandboxId')
+            url = saved_data.get('url')
+            files = saved_data.get('files', [])
+            
+            if sandbox_id and saved_data.get('active'):
+                print(f"[recovery] Found saved sandbox: {sandbox_id}")
+                
+                # Try to reconnect to existing sandbox
+                try:
+                    from e2b_code_interpreter import Sandbox as E2BSandbox
+                    api_key = os.getenv("E2B_API_KEY")
+                    
+                    # Try to connect to existing sandbox
+                    if hasattr(E2BSandbox, 'connect'):
+                        if inspect.iscoroutinefunction(E2BSandbox.connect):
+                            sandbox = await E2BSandbox.connect(sandbox_id, api_key=api_key)
+                        else:
+                            sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key)
+                    else:
+                        # If connect method doesn't exist, create new one
+                        if inspect.iscoroutinefunction(E2BSandbox.create):
+                            sandbox = await E2BSandbox.create(api_key=api_key)
+                        else:
+                            sandbox = E2BSandbox.create(api_key=api_key)
+                        # Get new sandbox ID
+                        sandbox_id = getattr(sandbox, 'id', None) or getattr(sandbox, 'sandbox_id', None)
+                    
+                    # Set in create_ai_sandbox module
+                    create_mod = MODULES.get("create_ai_sandbox")
+                    if create_mod:
+                        create_mod.active_sandbox = sandbox
+                        create_mod.sandbox_data = {"sandboxId": sandbox_id, "url": url}
+                        create_mod.existing_files = set(files)
+                        create_mod.sandbox_state = {
+                            "fileCache": {
+                                "files": {},
+                                "lastSync": int(time.time() * 1000),
+                                "sandboxId": sandbox_id,
+                            },
+                            "sandbox": sandbox,
+                            "sandboxData": {
+                                "sandboxId": sandbox_id,
+                                "url": url,
+                            },
+                        }
+                    
+                    print("[recovery] State recovered successfully!")
+                    return True
+                    
+                except Exception as e:
+                    print(f"[recovery] Failed to recover sandbox: {e}")
+                    # Clear invalid state file
+                    try:
+                        os.remove('/tmp/g99_sandbox.json')
+                    except:
+                        pass
+                    
+    except Exception as e:
+        print(f"[recovery] Recovery failed: {e}")
+    
+    return False
 
 async def maybe_await(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
-# --- FastAPI Lifespan & App Initialization ---
+# --- FastAPI Lifespan & App Initialization - FIXED ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Backend starting...")
-    # load_state(MODULES)
+    
+    # CRITICAL: Try to recover sandbox state first
+    await recover_sandbox_state()
+    
+    # Then sync globals
     await sync_globals()
+    
     yield
     print("🛑 Backend shutting down...")
     # Add sandbox cleanup logic here if needed
@@ -204,6 +297,40 @@ class CustomJSONResponse(JSONResponse):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "modules_loaded": list(MODULES.keys())}
+
+# ADD: Debug endpoint to check sandbox state
+@app.get("/api/debug-sandbox-state")
+async def debug_sandbox_state():
+    await sync_globals()
+    
+    debug_info = {}
+    for name, module in MODULES.items():
+        if hasattr(module, "active_sandbox"):
+            active_sandbox = getattr(module, "active_sandbox", None)
+            sandbox_data = getattr(module, "sandbox_data", None)
+            existing_files = getattr(module, "existing_files", set())
+            
+            debug_info[name] = {
+                "has_active_sandbox": active_sandbox is not None,
+                "sandbox_data": sandbox_data,
+                "files_count": len(existing_files) if existing_files else 0,
+                "files": list(existing_files) if existing_files else []
+            }
+    
+    # Check persistent storage
+    persistent_state = None
+    if os.path.exists('/tmp/g99_sandbox.json'):
+        try:
+            with open('/tmp/g99_sandbox.json', 'r') as f:
+                persistent_state = json.load(f)
+        except:
+            pass
+    
+    return {
+        "modules": debug_info,
+        "persistent_state": persistent_state,
+        "render_env": os.environ.get("RENDER", "not_render")
+    }
 
 # --- Sandbox Management ---
 
@@ -302,7 +429,7 @@ async def api_apply_ai_code_stream(request: Request):
     body = await request.json()
     response = await maybe_await(mod.POST(body))
     
-    # Sync globals back after applying code
+    # Sync globals back after applying code - CRITICAL FOR RENDER
     await sync_globals()
     
     # CRITICAL FIX: Check if response is already a FastAPI response object
@@ -340,6 +467,7 @@ async def api_kill_sandbox():
     mod = MODULES.get("kill_sandbox")
     if not mod: return create_error_response("Kill sandbox module not loaded")
     result = await maybe_await(mod.POST())
+    await sync_globals()  # Sync after killing sandbox
     return CustomJSONResponse(result)
 
 @app.get("/api/get-sandbox-files")

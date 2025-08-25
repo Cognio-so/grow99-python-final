@@ -622,10 +622,12 @@ async def POST() -> Dict[str, Any]:
         if E2BSandbox is None:
             raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
 
-        try:
-            sandbox = E2BSandbox(api_key=os.getenv("E2B_API_KEY"))
-        except TypeError:
-            sandbox = E2BSandbox()
+        api_key = os.getenv("E2B_API_KEY")
+        if not api_key:
+            raise RuntimeError("E2B_API_KEY environment variable is required")
+
+        sandbox = E2BSandbox(api_key=api_key)
+        print(f"[create-ai-sandbox] Sandbox created with API key: {api_key[:8]}...")
 
         # Set timeout if supported
         set_timeout = getattr(sandbox, "set_timeout", None) or getattr(sandbox, "setTimeout", None)

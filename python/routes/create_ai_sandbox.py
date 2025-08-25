@@ -15,15 +15,37 @@ except Exception as _e:
     raise
 
 # E2B SDK imports with better error handling
+# E2B SDK imports - force correct package
+import sys
+
+# Clear any existing e2b imports to avoid conflicts
+modules_to_remove = [k for k in sys.modules.keys() if k.startswith('e2b') and k != 'e2b_code_interpreter']
+for module in modules_to_remove:
+    del sys.modules[module]
+
 try:
+    # Import only from the correct package
+    import e2b_code_interpreter
     from e2b_code_interpreter import Sandbox
+    
     E2BSandbox = Sandbox
     SDK_TYPE = "code_interpreter"
-    print("[E2B] Using e2b-code-interpreter SDK")
+    
+    print(f"[E2B] Successfully imported from {e2b_code_interpreter.__file__}")
+    print(f"[E2B] Sandbox class: {Sandbox.__module__}.{Sandbox.__name__}")
+    
+    # Verify it accepts api_key parameter
+    import inspect
+    sig = inspect.signature(Sandbox.__init__)
+    if 'api_key' in sig.parameters:
+        print("[E2B] ✅ Correct Sandbox class with api_key parameter")
+    else:
+        print(f"[E2B] ❌ Wrong Sandbox class - parameters: {list(sig.parameters.keys())}")
+        raise ImportError("Wrong Sandbox class imported")
+        
 except ImportError as e:
-    print(f"[E2B] Import error: {e}")
-    raise RuntimeError("Install e2b-code-interpreter: pip install e2b-code-interpreter")
-
+    print(f"[E2B] Import failed: {e}")
+    raise RuntimeError("Install e2b-code-interpreter: pip install e2b-code-interpreter>=2.0.0")
 # App config
 try:
     from config.app_config import appConfig

@@ -6,7 +6,7 @@ from routes.state_manager import save_state
 active_sandbox: Optional[Any] = None
 sandbox_data: Optional[Any] = None
 existing_files: Set[str] = set()
-
+import inspect
 async def POST() -> Dict[str, Any]:
     """Kill active sandbox - equivalent to POST function from TypeScript"""
     global active_sandbox, sandbox_data, existing_files
@@ -19,14 +19,16 @@ async def POST() -> Dict[str, Any]:
         # Kill existing sandbox if any
         if active_sandbox is not None:
             try:
-                # Use .close() for e2b_code_interpreter or similar methods
                 if hasattr(active_sandbox, 'close'):
-                    await active_sandbox.close()
-                # Add other potential cleanup methods if your sandbox objects differ
+                    if inspect.iscoroutinefunction(active_sandbox.close):
+                        await active_sandbox.close()
+                    else:
+                        active_sandbox.close()
                 sandbox_killed = True
                 print('[kill-sandbox] Sandbox closed successfully')
             except Exception as e:
                 print(f'[kill-sandbox] Failed to close sandbox: {e}')
+
             
         # Clear all global state variables
         active_sandbox = None

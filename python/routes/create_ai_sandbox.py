@@ -90,11 +90,12 @@ async def _run_in_sandbox(sandbox: Any, code: str) -> Dict[str, Any]:
         g.add_edge("exec", END)
         return g.compile()
 
-    if not hasattr(_run_in_sandbox, "_graph"):
-        _run_in_sandbox._graph = _compile_graph()
+    # if not hasattr(_run_in_sandbox, "_graph"):
+    #     _run_in_sandbox._graph = _compile_graph()
 
-    graph = _run_in_sandbox._graph
-    return await graph.ainvoke({"code": code})
+    # graph = _run_in_sandbox._graph
+    # return await graph.ainvoke({"code": code})
+    return await chain.ainvoke({"code": code})
 
 def _extract_output_text(result: Any) -> str:
     """Enhanced output extraction"""
@@ -246,7 +247,7 @@ print("VERIFICATION_COMPLETE")
         print(f"[verify_vite_server] Verification failed: {e}")
         return False
 
-async def ensure_vite_server(sandbox: Any) -> bool:
+async def ensure_vite_server(sandbox: Any, sandbox_id: str) -> bool:
     """Ensure Vite server is running properly with COMPLETE Tailwind setup"""
     print("[ensure_vite_server] Starting Vite server setup with FULL Tailwind configuration...")
     
@@ -478,88 +479,79 @@ else:
     # Start Vite with explicit Tailwind verification
     print("[ensure_vite_server] Starting Vite with Tailwind verification...")
     start_code = '''
-import subprocess
-import os
-import time
+import subprocess, os, time, socket
 
-os.chdir('/home/user/app')
-
-# Kill existing Vite processes
+# kill any previous vite
 try:
-    subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-    subprocess.run(['pkill', '-f', 'node.*vite'], capture_output=True)
-    time.sleep(2)
+    subprocess.run(['pkill','-f','vite'], capture_output=True)
+    subprocess.run(['pkill','-f','node.*vite'], capture_output=True)
+    time.sleep(1)
     print("KILLED_EXISTING_PROCESSES")
-except:
+except Exception:
     print("NO_PROCESSES_TO_KILL")
 
-# Verify Tailwind files exist
-tailwind_files = [
-    '/home/user/app/tailwind.config.js',
-    '/home/user/app/postcss.config.js',
-    '/home/user/app/src/index.css'
-]
-
-all_exist = True
-for file_path in tailwind_files:
-    if os.path.exists(file_path):
-        print(f"âœ“ {file_path} exists")
-        # Check content of index.css
-        if 'index.css' in file_path:
-            with open(file_path, 'r') as f:
-                content = f.read()
-                if '@tailwind base' in content:
-                    print("âœ“ Tailwind directives found in index.css")
-                else:
-                    print("âŒ Missing Tailwind directives in index.css")
-                    all_exist = False
-    else:
-        print(f"âŒ {file_path} missing")
-        all_exist = False
-
-if all_exist:
-    print("ðŸŽ‰ All Tailwind files are properly configured!")
-else:
-    print("âŒ Tailwind setup incomplete")
-
-# Start Vite dev server with explicit configuration
 env = os.environ.copy()
 env['FORCE_COLOR'] = '0'
 env['HOST'] = '0.0.0.0'
 env['PORT'] = '5173'
 env['__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS'] = '.e2b.app,.e2b.dev,e2b.local'
+env['E2B_SANDBOX_ID'] = '{{SANDBOX_ID}}'
 
-# Use nohup to run in background
-cmd = ['nohup', 'npm', 'run', 'dev']
+# write logs to files to avoid PIPE buffer deadlocks
+log_out = open('/home/user/vite-5173.out','ab', buffering=0)
+log_err = open('/home/user/vite-5173.err','ab', buffering=0)
+
 process = subprocess.Popen(
-    cmd,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
+    ['npm','run','dev'],
+    stdout=log_out,
+    stderr=log_err,
     env=env,
-    preexec_fn=os.setsid if hasattr(os, 'setsid') else None
+    cwd='/home/user/app',
+    preexec_fn=os.setsid if hasattr(os,'setsid') else None
 )
 
+with open('/tmp/vite-process.pid','w') as f:
+    f.write(str(process.pid))
 print(f"VITE_STARTED_PID: {process.pid}")
 
-# Wait a bit for startup
-time.sleep(5)
+# wait up to ~25s for port to open
+ok = False
+for i in range(25):
+    time.sleep(1)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)
+    rc = s.connect_ex(('localhost',5173))
+    s.close()
+    if rc == 0:
+        print(f"VITE_PORT_ACCESSIBLE_AFTER: {i+1}s")
+        ok = True
+        break
 
-# Check if it's responding
-import socket
-try:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(1)
-    result = sock.connect_ex(('localhost', 5173))
-    sock.close()
-    if result == 0:
-        print("VITE_PORT_ACCESSIBLE")
+# verify tailwind files
+all_exist = True
+for file_path in [
+    '/home/user/app/tailwind.config.js',
+    '/home/user/app/postcss.config.js',
+    '/home/user/app/src/index.css'
+]:
+    if os.path.exists(file_path):
+        print(f"✓ {file_path} exists")
+        if file_path.endswith('index.css'):
+            content = open(file_path).read()
+            if '@tailwind base' in content:
+                print("✓ Tailwind directives found in index.css")
+            else:
+                print("✖ Missing Tailwind directives in index.css"); all_exist = False
     else:
-        print("VITE_PORT_NOT_ACCESSIBLE")
-except Exception as e:
-    print(f"VITE_CHECK_ERROR: {e}")
+        print(f"✖ {file_path} missing"); all_exist = False
 
+print("TAILWIND_OK", all_exist)
+print("PORT_OK", ok)
 print("VITE_STARTUP_COMPLETE")
 '''
+# inject sandbox id safely (no outer f-string)
+    start_code = start_code.replace("{{SANDBOX_ID}}", sandbox_id)
+
     
     try:
         start_result = await _run_in_sandbox(sandbox, start_code)
@@ -662,9 +654,10 @@ async def POST() -> Dict[str, Any]:
 
         
         print(f"[create-ai-sandbox] Sandbox created: {sandbox_id}")
-
+        active_sandbox = sandbox
+        sandbox_data = {"sandboxId": sandbox_id}
         print("[create-ai-sandbox] Setting up COMPLETE Vite React app with FULL Tailwind CSS configuration...")
-        vite_started = await ensure_vite_server(sandbox)
+        vite_started = await ensure_vite_server(sandbox, sandbox_id)
         
         if not vite_started:
             print("[create-ai-sandbox] ⚠️ CRITICAL ERROR: Vite + Tailwind setup failed!")
@@ -672,7 +665,7 @@ async def POST() -> Dict[str, Any]:
 
         # The URL can be constructed from the sandbox ID
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
-
+        sandbox_data.update({"url": sandbox_url})
         
         # Store sandbox globally
         active_sandbox = sandbox

@@ -5,7 +5,7 @@
 
 export const pythonBackendConfig = {
   // Backend URL configuration
-  baseUrl: process.env.PYTHON_API_URL,
+  baseUrl: process.env.PYTHON_API_URL || process.env.NEXT_PUBLIC_PYTHON_API_URL,
   
   // API endpoints mapping (same paths as Next.js API routes)
   endpoints: {

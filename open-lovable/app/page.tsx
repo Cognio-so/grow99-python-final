@@ -1258,7 +1258,7 @@ const debugSandboxConnection = async () => {
     
     // 3. Test simple command
    // 3. Test simple command
-const baseUrl = process.env.PYTHON_API_URL || 'http://localhost:8000';
+const baseUrl = process.env.PYTHON_API_URL || process.env.NEXT_PUBLIC_PYTHON_API_URL;
 const testResult = await fetch(baseUrl + '/api/run-command', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

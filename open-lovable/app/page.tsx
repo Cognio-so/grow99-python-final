@@ -11,6 +11,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 // Import Python API client
 import { pythonApi } from '@/lib/python-api-client';
+
 // Import icons from centralized module to avoid Turbopack chunk issues
 import { 
   FiFile, 
@@ -1256,7 +1257,9 @@ const debugSandboxConnection = async () => {
     console.log('Sandbox Files:', files);
     
     // 3. Test simple command
-    const testResult = await fetch('http://localhost:8000/api/run-command', {
+   // 3. Test simple command
+const baseUrl = process.env.PYTHON_API_URL || 'http://localhost:8000';
+const testResult = await fetch(baseUrl + '/api/run-command', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: 'ls -la /home/user/app/src' })

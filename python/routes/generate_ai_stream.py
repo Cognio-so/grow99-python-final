@@ -59,7 +59,7 @@ def load_design_schemas():
                 try:
                     parsed_schema = json.loads(schema_json)
                     schemas.append(parsed_schema)
-                    print(f"[schema] Row {row_count}: Successfully parsed JSON schema")
+                    # print(f"[schema] Row {row_count}: Successfully parsed JSON schema")
                 except json.JSONDecodeError as e:
                     print(f"[schema] Row {row_count}: Invalid JSON - {e}")
                     continue

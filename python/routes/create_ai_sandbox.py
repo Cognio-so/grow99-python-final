@@ -24,28 +24,38 @@ for module in modules_to_remove:
     del sys.modules[module]
 
 try:
-    # Import only from the correct package
     import e2b_code_interpreter
     from e2b_code_interpreter import Sandbox
-    
-    E2BSandbox = Sandbox
     SDK_TYPE = "code_interpreter"
-    
-    print(f"[E2B] Successfully imported from {e2b_code_interpreter.__file__}")
-    print(f"[E2B] Sandbox class: {Sandbox.__module__}.{Sandbox.__name__}")
-    
-    # Verify it accepts api_key parameter
-    import inspect
-    sig = inspect.signature(Sandbox.__init__)
-    if 'api_key' in sig.parameters:
-        print("[E2B] ✅ Correct Sandbox class with api_key parameter")
-    else:
-        print(f"[E2B] ❌ Wrong Sandbox class - parameters: {list(sig.parameters.keys())}")
-        raise ImportError("Wrong Sandbox class imported")
-        
-except ImportError as e:
+    print(f"[E2B] Imported from {e2b_code_interpreter.__file__}")
+except Exception as e:
+    Sandbox = None
+    SDK_TYPE = "code_interpreter"
     print(f"[E2B] Import failed: {e}")
-    raise RuntimeError("Install e2b-code-interpreter: pip install e2b-code-interpreter>=2.0.0")
+
+import inspect as _inspect
+
+def make_sandbox(api_key: str):
+    """
+    Works with both v2 (Sandbox(api_key=...)) and older v1 (Sandbox(opts)).
+    """
+    if Sandbox is None:
+        raise RuntimeError("E2B Sandbox not available. Check package install / version.")
+
+    sig = _inspect.signature(Sandbox.__init__)
+    params = list(sig.parameters.keys())
+    # v1 has 'opts'; v2 has 'api_key'
+    if "opts" in params and "api_key" not in params:
+        class _Opts:
+            def __init__(self, api_key):
+                self.api_key = api_key
+                self.on_stdout = None
+                self.on_stderr = None
+                self.keep_alive = True
+        return Sandbox(_Opts(api_key))
+    else:
+        return Sandbox(api_key=api_key)
+
 # App config
 try:
     from config.app_config import appConfig
@@ -648,7 +658,8 @@ async def POST() -> Dict[str, Any]:
         if not api_key:
             raise RuntimeError("E2B_API_KEY environment variable is required")
 
-        sandbox = E2BSandbox(api_key=api_key)
+        sandbox = make_sandbox(api_key)
+
         print(f"[create-ai-sandbox] Sandbox created with API key: {api_key[:8]}...")
 
         # Set timeout if supported

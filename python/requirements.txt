@@ -14,7 +14,6 @@ langchain-openai
 langchain-anthropic
 langchain-google-genai
 langchain-groq
-e2b
 e2b-code-interpreter
 sse-starlette
 streamlit

@@ -16,15 +16,13 @@ except Exception as _e:
 
 # E2B SDK imports with better error handling
 try:
-    from e2b_code_interpreter import Sandbox as E2BSandbox
+    from e2b_code_interpreter import Sandbox
+    E2BSandbox = Sandbox
     SDK_TYPE = "code_interpreter"
-except Exception:
-    try:
-        from e2b import Sandbox as E2BSandbox
-        SDK_TYPE = "legacy"
-    except Exception:
-        E2BSandbox = None
-        SDK_TYPE = None
+    print("[E2B] Using e2b-code-interpreter SDK")
+except ImportError as e:
+    print(f"[E2B] Import error: {e}")
+    raise RuntimeError("Install e2b-code-interpreter: pip install e2b-code-interpreter")
 
 # App config
 try:

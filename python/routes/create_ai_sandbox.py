@@ -15,8 +15,16 @@ except Exception as _e:
     raise
 
 # E2B SDK imports with better error handling
-# AFTER
-from e2b_code_interpreter import Sandbox as E2BSandbox
+try:
+    from e2b_code_interpreter import Sandbox as E2BSandbox
+    SDK_TYPE = "code_interpreter"
+except Exception:
+    try:
+        from e2b import Sandbox as E2BSandbox
+        SDK_TYPE = "legacy"
+    except Exception:
+        E2BSandbox = None
+        SDK_TYPE = None
 
 # App config
 try:
@@ -277,7 +285,7 @@ package_json = {
 
 with open('/home/user/app/package.json', 'w') as f:
     json.dump(package_json, f, indent=2)
-print('✓ package.json')
+print('âœ“ package.json')
 
 # Vite config optimized for E2B with proper allowedHosts - EXACT COPY FROM TS
 # Enhanced Vite config with better WebSocket handling
@@ -323,9 +331,9 @@ export default defineConfig({
 
 with open('/home/user/app/vite.config.mjs', 'w') as f:
     f.write(vite_config)
-print('✓ vite.config.mjs')
+print('âœ“ vite.config.mjs')
 
-# 🚨 CRITICAL: Tailwind config - EXACT COPY FROM TYPESCRIPT VERSION
+# ðŸš¨ CRITICAL: Tailwind config - EXACT COPY FROM TYPESCRIPT VERSION
 tailwind_config = """/** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -340,9 +348,9 @@ export default {
 
 with open('/home/user/app/tailwind.config.js', 'w') as f:
     f.write(tailwind_config)
-print('✓ tailwind.config.js')
+print('âœ“ tailwind.config.js')
 
-# 🚨 CRITICAL: PostCSS config - EXACT COPY FROM TYPESCRIPT VERSION
+# ðŸš¨ CRITICAL: PostCSS config - EXACT COPY FROM TYPESCRIPT VERSION
 postcss_config = """export default {
   plugins: {
     tailwindcss: {},
@@ -352,9 +360,9 @@ postcss_config = """export default {
 
 with open('/home/user/app/postcss.config.js', 'w') as f:
     f.write(postcss_config)
-print('✓ postcss.config.js')
+print('âœ“ postcss.config.js')
 
-# 🚨 CRITICAL: Index.html - EXACT COPY FROM TYPESCRIPT VERSION
+# ðŸš¨ CRITICAL: Index.html - EXACT COPY FROM TYPESCRIPT VERSION
 index_html = """<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -370,9 +378,9 @@ index_html = """<!DOCTYPE html>
 
 with open('/home/user/app/index.html', 'w') as f:
     f.write(index_html)
-print('✓ index.html')
+print('âœ“ index.html')
 
-# 🚨 CRITICAL: Main.jsx - EXACT COPY FROM TYPESCRIPT VERSION
+# ðŸš¨ CRITICAL: Main.jsx - EXACT COPY FROM TYPESCRIPT VERSION
 main_jsx = """import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
@@ -386,9 +394,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 with open('/home/user/app/src/main.jsx', 'w') as f:
     f.write(main_jsx)
-print('✓ src/main.jsx')
+print('âœ“ src/main.jsx')
 
-# 🚨 CRITICAL: App.jsx with EXPLICIT Tailwind test - EXACT COPY FROM TYPESCRIPT
+# ðŸš¨ CRITICAL: App.jsx with EXPLICIT Tailwind test - EXACT COPY FROM TYPESCRIPT
 app_jsx = """function App() {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
@@ -406,9 +414,9 @@ export default App"""
 
 with open('/home/user/app/src/App.jsx', 'w') as f:
     f.write(app_jsx)
-print('✓ src/App.jsx')
+print('âœ“ src/App.jsx')
 
-# 🚨 CRITICAL: Index.css with EXPLICIT Tailwind directives - EXACT COPY FROM TYPESCRIPT
+# ðŸš¨ CRITICAL: Index.css with EXPLICIT Tailwind directives - EXACT COPY FROM TYPESCRIPT
 index_css = """@tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -437,9 +445,9 @@ body {
 
 with open('/home/user/app/src/index.css', 'w') as f:
     f.write(index_css)
-print('✓ src/index.css')
+print('âœ“ src/index.css')
 
-print('\\n🎉 All files created successfully with COMPLETE Tailwind setup!')
+print('\\nðŸŽ‰ All files created successfully with COMPLETE Tailwind setup!')
 '''
 
     await _run_in_sandbox(sandbox, setup_script)
@@ -459,10 +467,10 @@ result = subprocess.run(
 )
 
 if result.returncode == 0:
-    print('✓ Dependencies installed successfully')
-    print('✓ Tailwind CSS is now configured and ready!')
+    print('âœ“ Dependencies installed successfully')
+    print('âœ“ Tailwind CSS is now configured and ready!')
 else:
-    print(f'⚠️ Warning: npm install had issues: {result.stderr}')
+    print(f'âš ï¸ Warning: npm install had issues: {result.stderr}')
     # Continue anyway as it might still work
 '''
     await _run_in_sandbox(sandbox, install_script)
@@ -495,24 +503,24 @@ tailwind_files = [
 all_exist = True
 for file_path in tailwind_files:
     if os.path.exists(file_path):
-        print(f"✓ {file_path} exists")
+        print(f"âœ“ {file_path} exists")
         # Check content of index.css
         if 'index.css' in file_path:
             with open(file_path, 'r') as f:
                 content = f.read()
                 if '@tailwind base' in content:
-                    print("✓ Tailwind directives found in index.css")
+                    print("âœ“ Tailwind directives found in index.css")
                 else:
-                    print("❌ Missing Tailwind directives in index.css")
+                    print("âŒ Missing Tailwind directives in index.css")
                     all_exist = False
     else:
-        print(f"❌ {file_path} missing")
+        print(f"âŒ {file_path} missing")
         all_exist = False
 
 if all_exist:
-    print("🎉 All Tailwind files are properly configured!")
+    print("ðŸŽ‰ All Tailwind files are properly configured!")
 else:
-    print("❌ Tailwind setup incomplete")
+    print("âŒ Tailwind setup incomplete")
 
 # Start Vite dev server with explicit configuration
 env = os.environ.copy()
@@ -565,7 +573,7 @@ print("VITE_STARTUP_COMPLETE")
         )
         
         if not tailwind_working:
-            print("[ensure_vite_server] ❌ CRITICAL: Tailwind CSS is not properly configured!")
+            print("[ensure_vite_server] âŒ CRITICAL: Tailwind CSS is not properly configured!")
             return False
         
         # Wait for Vite to fully start
@@ -575,15 +583,32 @@ print("VITE_STARTUP_COMPLETE")
         server_running = await verify_vite_server(sandbox, "http://localhost:5173")
         
         if tailwind_working and server_running:
-            print("[ensure_vite_server] ✅ SUCCESS: Vite + Tailwind CSS fully configured and running!")
+            print("[ensure_vite_server] âœ… SUCCESS: Vite + Tailwind CSS fully configured and running!")
             return True
         else:
-            print(f"[ensure_vite_server] ❌ FAILED: Tailwind working: {tailwind_working}, Server running: {server_running}")
+            print(f"[ensure_vite_server] âŒ FAILED: Tailwind working: {tailwind_working}, Server running: {server_running}")
             return False
         
     except Exception as e:
         print(f"[ensure_vite_server] Failed to start Vite: {e}")
         return False
+
+# In create_ai_sandbox.py
+async def _get_sandbox_id_compat(sandbox):
+    # 1) Try common attributes
+    sid = getattr(sandbox, "id", None) or getattr(sandbox, "sandbox_id", None)
+    if sid:
+        return sid
+
+    # 2) Fallback to get_info() (async or sync)
+    get_info = getattr(sandbox, "get_info", None)
+    if get_info:
+        info = await get_info() if inspect.iscoroutinefunction(get_info) else get_info()
+        if isinstance(info, dict):
+            return info.get("sandbox_id") or info.get("id")
+        return getattr(info, "sandbox_id", None) or getattr(info, "id", None)
+
+    raise AttributeError("Could not determine sandbox id from SDK.")
 
 async def POST() -> Dict[str, Any]:
     """Enhanced sandbox creation with COMPLETE Tailwind CSS setup"""
@@ -598,76 +623,57 @@ async def POST() -> Dict[str, Any]:
         if active_sandbox:
             print("[create-ai-sandbox] Killing existing sandbox...")
             try:
-                killer = getattr(active_sandbox, "kill", None) or getattr(active_sandbox, "close", None)
-                if killer:
-                    if inspect.iscoroutinefunction(killer):
-                        await killer()
+                # Use the new async close() method for v2.0.0
+                if hasattr(active_sandbox, "close"):
+                    if inspect.iscoroutinefunction(active_sandbox.close):
+                        await active_sandbox.close()
                     else:
-                        killer()
+                        active_sandbox.close()
+
             except Exception as e:
                 print("Failed to close existing sandbox:", e)
             active_sandbox = None
 
         existing_files.clear()
 
-        # Create base sandbox
         print(f"[create-ai-sandbox] Creating base E2B sandbox with {appConfig.e2b.timeoutMinutes} minute timeout...")
         
         if E2BSandbox is None:
-            raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
+            raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter'.")
 
-        # AFTER
-        sandbox = E2BSandbox()
+        # --- THIS IS THE CRITICAL FIX ---
+        # Ensure you are calling the .create() method
+        api_key = os.getenv("E2B_API_KEY")
+        create_fn = getattr(E2BSandbox, "create", None)
 
-        # Set timeout if supported
-        set_timeout = getattr(sandbox, "set_timeout", None) or getattr(sandbox, "setTimeout", None)
-        if callable(set_timeout):
-            try:
-                set_timeout(appConfig.e2b.timeoutMs)
-                print(f"[create-ai-sandbox] Set sandbox timeout to {appConfig.e2b.timeoutMinutes} minutes")
-            except Exception:
-                pass
+        if create_fn and inspect.iscoroutinefunction(create_fn):
+            # Newer e2b_code_interpreter exposes async create()
+            sandbox = await create_fn(api_key=api_key)
+        elif create_fn:
+            # Some versions expose create() but it's sync
+            sandbox = create_fn(api_key=api_key)
+        else:
+            # Legacy e2b uses sync constructor
+            sandbox = E2BSandbox(api_key=api_key)
 
-        # Get sandbox ID
-        sandbox_id = (
-            getattr(sandbox, "sandbox_id", None)
-            or getattr(sandbox, "id", None)
-            or getattr(sandbox, "sandboxId", None)
-            or str(int(time.time() * 1000))
-        )
+        
+        # In v2.0, the ID is a direct property
+        sandbox_id = await _get_sandbox_id_compat(sandbox)
+
         
         print(f"[create-ai-sandbox] Sandbox created: {sandbox_id}")
 
-        # 🚨 CRITICAL: Set up COMPLETE Vite React app with FULL Tailwind CSS
         print("[create-ai-sandbox] Setting up COMPLETE Vite React app with FULL Tailwind CSS configuration...")
         vite_started = await ensure_vite_server(sandbox)
         
         if not vite_started:
-            print("[create-ai-sandbox] ❌ CRITICAL ERROR: Vite + Tailwind setup failed!")
-            # Don't fail completely, but warn user
-            print("[create-ai-sandbox] ⚠️  Website styling may not work properly!")
+            print("[create-ai-sandbox] ⚠️ CRITICAL ERROR: Vite + Tailwind setup failed!")
+            print("[create-ai-sandbox] ⚠️ Website styling may not work properly!")
 
-        # Get the correct sandbox URL
+        # The URL can be constructed from the sandbox ID
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
-        
-        # Verify the URL is accessible (basic check)
-        verify_url_code = f'''
-try:
-    import requests
-    response = requests.get('{sandbox_url}', timeout=10)
-    print(f"URL_CHECK_STATUS: {{response.status_code}}")
-    print(f"URL_CHECK_ACCESSIBLE: {{response.status_code < 500}}")
-except Exception as e:
-    print(f"URL_CHECK_ERROR: {{str(e)}}")
-'''
-        
-        try:
-            url_check = await _run_in_sandbox(sandbox, verify_url_code)
-            url_output = _extract_output_text(url_check)
-            print(f"[create-ai-sandbox] URL verification: {url_output}")
-        except:
-            print("[create-ai-sandbox] Could not verify URL accessibility")
 
+        
         # Store sandbox globally
         active_sandbox = sandbox
         sandbox_data = {
@@ -710,28 +716,23 @@ except Exception as e:
         }
 
     except Exception as error:
-        print("[create-ai-sandbox] Error:", error)
+        print(f"[create-ai-sandbox] Error: {error}")
 
-        # Clean up on error
-        if sandbox:
+        if sandbox and hasattr(sandbox, "close"):
             try:
-                killer = getattr(sandbox, "kill", None) or getattr(sandbox, "close", None)
-                if killer:
-                    if inspect.iscoroutinefunction(killer):
-                        await killer()
-                    else:
-                        killer()
+                if inspect.iscoroutinefunction(sandbox.close):
+                    await sandbox.close()
+                else:
+                    sandbox.close()
             except Exception as e:
                 print("Failed to close sandbox on error:", e)
 
-        try:
-            import traceback
-            details = traceback.format_exc()
-        except Exception:
-            details = None
+        import traceback
+        details = traceback.format_exc()
 
         return {
-            "error": str(error) if isinstance(error, Exception) else "Failed to create sandbox",
+            "error": str(error),
             "details": details,
+            "success": False,
             "status": 500,
         }

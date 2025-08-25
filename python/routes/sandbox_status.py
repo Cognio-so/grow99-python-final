@@ -1,6 +1,17 @@
 from datetime import datetime
-from e2b_code_interpreter import Sandbox
 import json
+import inspect
+
+try:
+    from e2b_code_interpreter import Sandbox as E2BSandbox
+    SDK_TYPE = "code_interpreter"
+except Exception:
+    try:
+        from e2b import Sandbox as E2BSandbox
+        SDK_TYPE = "legacy"
+    except Exception:
+        E2BSandbox = None
+        SDK_TYPE = None
 
 # Global variables (similar to those in TypeScript)
 active_sandbox = None
@@ -64,8 +75,21 @@ def initialize_sandbox(timeout_seconds=60):
     
     try:
         # Create sandbox with specified timeout
-        # api_key=os.getenv("E2B_API_KEY")
-        active_sandbox = Sandbox(timeout=timeout_seconds)
+        api_key=os.getenv("E2B_API_KEY")
+        create_fn = getattr(E2BSandbox, "create", None)
+
+        if create_fn and inspect.iscoroutinefunction(create_fn):
+            # If this code path is inside a sync function, either:
+            # 1) move creation to an async context and 'await' it there, OR
+            # 2) wrap it with asyncio.run(...) exactly once at startup.
+            # Example (only if you're at module start or a CLI entrypoint):
+            # active_sandbox = asyncio.run(create_fn(api_key=api_key, timeout=timeout_seconds))
+            raise RuntimeError("sandbox_status.py is synchronous; create() here is async. Create the sandbox in your async route and only 'read' status here.")
+        elif create_fn:
+            active_sandbox = create_fn(api_key=api_key, timeout=timeout_seconds)
+        else:
+            active_sandbox = E2BSandbox(api_key=api_key, timeout=timeout_seconds)
+
         
         # Get sandbox info
         info = active_sandbox.get_info()

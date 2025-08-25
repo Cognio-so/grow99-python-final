@@ -64,8 +64,8 @@ def initialize_sandbox(timeout_seconds=60):
     
     try:
         # Create sandbox with specified timeout
-        api_key=os.getenv("E2B_API_KEY")
-        active_sandbox = Sandbox(api_key=api_key,timeout=timeout_seconds)
+        # api_key=os.getenv("E2B_API_KEY")
+        active_sandbox = Sandbox(timeout=timeout_seconds)
         
         # Get sandbox info
         info = active_sandbox.get_info()

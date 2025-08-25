@@ -617,7 +617,7 @@ async def POST() -> Dict[str, Any]:
             raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
 
         # AFTER
-        sandbox = E2BSandbox(api_key=os.getenv("E2B_API_KEY"))
+        sandbox = E2BSandbox()
 
         # Set timeout if supported
         set_timeout = getattr(sandbox, "set_timeout", None) or getattr(sandbox, "setTimeout", None)

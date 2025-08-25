@@ -294,41 +294,34 @@ print('âœ“ package.json')
 vite_config = """import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const port = 5173
-const id = process.env.E2B_SANDBOX_ID || ''
+const id = process.env.E2B_SANDBOX_ID
+const allowed = ['localhost', '127.0.0.1', '::1']
+if (id) {
+  allowed.push(`5173-${id}.e2b.app`, `5173-${id}.e2b.dev`)
+}
 
 export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
-    port,
+    port: 5173,
     strictPort: true,
-    // Fix: Allow all hosts for E2B compatibility
-    allowedHosts: 'all',
-    hmr: {
-      // Fix: Disable WebSocket HMR which fails in E2B
-      port: false
-    },
-    watch: { 
-      usePolling: true, 
-      interval: 1000
-    }
+    allowedHosts: allowed,            // <-- explicit list for Vite’s host check
+    hmr: { clientPort: 443, host: id ? `5173-${id}.e2b.app` : undefined },
+    watch: { usePolling: true, interval: 1000 },
+    cors: true
   },
   preview: {
     host: '0.0.0.0',
-    port,
+    port: 5173,
     strictPort: true,
-    allowedHosts: 'all'
+    allowedHosts: allowed
   },
-  define: {
-    'process.env': {},
-    global: 'globalThis'
-  },
-  optimizeDeps: {
-    include: ['react', 'react-dom']
-  }
+  define: { 'process.env': {}, global: 'globalThis' },
+  optimizeDeps: { include: ['react','react-dom'] }
 })
 """
+
 
 with open('/home/user/app/vite.config.mjs', 'w') as f:
     f.write(vite_config)
@@ -494,8 +487,9 @@ env = os.environ.copy()
 env['FORCE_COLOR'] = '0'
 env['HOST'] = '0.0.0.0'
 env['PORT'] = '5173'
-env['__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS'] = '.e2b.app,.e2b.dev,e2b.local'
 env['E2B_SANDBOX_ID'] = '{{SANDBOX_ID}}'
+env['__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS'] = '{{ALLOWED_HOSTS}}'
+
 
 # write logs to files to avoid PIPE buffer deadlocks
 log_out = open('/home/user/vite-5173.out','ab', buffering=0)
@@ -550,7 +544,9 @@ print("PORT_OK", ok)
 print("VITE_STARTUP_COMPLETE")
 '''
 # inject sandbox id safely (no outer f-string)
-    start_code = start_code.replace("{{SANDBOX_ID}}", sandbox_id)
+    allowed_hosts = f"5173-{{sandbox_id}}.e2b.app,5173-{{sandbox_id}}.e2b.dev"
+    start_code = start_code.replace("{{SANDBOX_ID}}", sandbox_id).replace("{{ALLOWED_HOSTS}}", allowed_hosts)
+
 
     
     try:
@@ -666,7 +662,13 @@ async def POST() -> Dict[str, Any]:
         # The URL can be constructed from the sandbox ID
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
         sandbox_data.update({"url": sandbox_url})
-        
+        # Persist sandbox info to a file for rehydration after process restarts (for Render)
+        try:
+            with open('/tmp/g99_sandbox.json', 'w') as f:
+                json.dump({"sandboxId": sandbox_id, "url": sandbox_url, "ts": int(time.time()*1000)}, f)
+        except Exception as e:
+            print("warn: failed to persist sandbox file:", e)
+
         # Store sandbox globally
         active_sandbox = sandbox
         sandbox_data = {

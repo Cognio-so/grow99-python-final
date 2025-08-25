@@ -15,16 +15,8 @@ except Exception as _e:
     raise
 
 # E2B SDK imports with better error handling
-try:
-    from e2b_code_interpreter import Sandbox as E2BSandbox
-    SDK_TYPE = "code_interpreter"
-except Exception:
-    try:
-        from e2b import Sandbox as E2BSandbox
-        SDK_TYPE = "legacy"
-    except Exception:
-        E2BSandbox = None
-        SDK_TYPE = None
+# AFTER
+from e2b_code_interpreter import Sandbox as E2BSandbox
 
 # App config
 try:
@@ -624,10 +616,8 @@ async def POST() -> Dict[str, Any]:
         if E2BSandbox is None:
             raise RuntimeError("E2B Sandbox library not available; install 'e2b-code-interpreter' or 'e2b'.")
 
-        try:
-            sandbox = E2BSandbox(api_key=os.getenv("E2B_API_KEY"))
-        except TypeError:
-            sandbox = E2BSandbox()
+        # AFTER
+        sandbox = E2BSandbox(api_key=os.getenv("E2B_API_KEY"))
 
         # Set timeout if supported
         set_timeout = getattr(sandbox, "set_timeout", None) or getattr(sandbox, "setTimeout", None)

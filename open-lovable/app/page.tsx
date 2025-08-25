@@ -152,41 +152,60 @@ const isValidUrl = (string: string) => {
   });
 
   // Clear old conversation data on component mount and create/restore sandbox
-  useEffect(() => {
-    const initializePage = async () => {
-      // Clear old conversation
-      try {
-        await pythonApi.updateConversationState('clear-old');
-        console.log('[home] Cleared old conversation data on mount');
-      } catch (error) {
-        console.error('[ai-sandbox] Failed to clear old conversation:', error);
-      }
-      
-      // Check if sandbox ID is in URL
-      const sandboxIdParam = searchParams.get('sandbox');
-      
-      if (sandboxIdParam) {
-        // Try to restore existing sandbox
-        console.log('[home] Attempting to restore sandbox:', sandboxIdParam);
-        setLoading(true);
-        try {
-          // For now, just create a new sandbox - you could enhance this to actually restore
-          // the specific sandbox if your backend supports it
-          await createSandbox(true);
-        } catch (error) {
-          console.error('[ai-sandbox] Failed to restore sandbox:', error);
-          // Create new sandbox on error
-          await createSandbox(true);
-        }
+  // Replace your old initialization useEffect with this corrected version in page.tsx
+
+useEffect(() => {
+  const initializeSandboxSession = async () => {
+    setLoading(true);
+    setShowLoadingBackground(true);
+    console.log("🚀 Initializing sandbox session...");
+
+    try {
+      // STEP 1: Always check the status with the backend first.
+      const statusData = await pythonApi.getSandboxStatus();
+
+      if (statusData.active && statusData.sandboxData) {
+        // STEP 2: An active sandbox was found! Use its data and sync the state.
+        console.log("✅ Active sandbox found. Reconnecting to session:", statusData.sandboxData);
+        setSandboxData(statusData.sandboxData);
+        updateStatus('Sandbox active', true);
+        
+        // Fetch the latest files from the existing sandbox
+        await fetchSandboxFiles();
+
       } else {
-        // Automatically create new sandbox
-        console.log('[home] No sandbox in URL, creating new sandbox automatically...');
-        await createSandbox(true);
+        // STEP 3: No active sandbox. NOW it is safe to create one.
+        console.log("🟡 No active sandbox found. Creating a new one...");
+        updateStatus('Creating sandbox...', false);
+        const createData = await pythonApi.createAiSandbox();
+
+        if (createData.success) {
+          console.log("✅ New sandbox created successfully:", createData);
+          setSandboxData(createData);
+          updateStatus('Sandbox active', true);
+          // Wait a moment for the sandbox to be fully ready before fetching files
+          setTimeout(fetchSandboxFiles, 2000); 
+        } else {
+          throw new Error(createData.error || 'Failed to create sandbox');
+        }
       }
-    };
-    
-    initializePage();
-  }, []); // Run only on mount
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+      console.error("❌ Error during sandbox initialization:", errorMessage);
+      updateStatus('Error', false);
+      addChatMessage(`Failed to initialize sandbox: ${errorMessage}`, 'system');
+    } finally {
+      setLoading(false);
+      setShowLoadingBackground(false);
+    }
+  };
+
+  initializeSandboxSession();
+  
+  // Also, clear old conversation data on mount
+  pythonApi.updateConversationState('clear-old');
+
+}, []); // The empty `[]` dependency array is crucial. It ensures this runs only ONCE. // Run only on mount
   
   useEffect(() => {
     // Handle Escape key for home screen
@@ -220,18 +239,7 @@ useEffect(() => {
 }, [showHomeScreen, homeUrlInput]); 
 
 
-  useEffect(() => {
-    // Only check sandbox status on mount and when user navigates to the page
-    checkSandboxStatus();
-    
-    // Optional: Check status when window regains focus
-    const handleFocus = () => {
-      checkSandboxStatus();
-    };
-    
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, []);
+ 
   useEffect(() => {
     if (chatMessagesRef.current) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;

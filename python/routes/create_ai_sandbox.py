@@ -251,7 +251,7 @@ async def ensure_vite_server(sandbox: Any, sandbox_id: str) -> bool:
     """Ensure Vite server is running properly with COMPLETE Tailwind setup"""
     print("[ensure_vite_server] Starting Vite server setup with FULL Tailwind configuration...")
     
-    # CRITICAL: Set up complete Vite + React + Tailwind app - EXACT COPY FROM TYPESCRIPT
+    # Keep your existing setup_script exactly as is...
     setup_script = '''
 import os
 import json
@@ -261,7 +261,7 @@ print('Setting up React app with Vite and Tailwind...')
 # Create directory structure
 os.makedirs('/home/user/app/src', exist_ok=True)
 
-# Package.json with COMPLETE Tailwind dependencies - EXACT COPY FROM TS
+# Package.json with COMPLETE Tailwind dependencies
 package_json = {
     "name": "sandbox-app",
     "version": "1.0.0",
@@ -286,11 +286,9 @@ package_json = {
 
 with open('/home/user/app/package.json', 'w') as f:
     json.dump(package_json, f, indent=2)
-print('âœ“ package.json')
+print('✓ package.json')
 
-# Vite config optimized for E2B with proper allowedHosts - EXACT COPY FROM TS
-# Enhanced Vite config with better WebSocket handling
-# Replace the existing vite_config string with this:
+# Vite config
 vite_config = """import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -306,7 +304,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
-    allowedHosts: allowed,            // <-- explicit list for Vite’s host check
+    allowedHosts: allowed,
     hmr: { clientPort: 443, host: id ? `5173-${id}.e2b.app` : undefined },
     watch: { usePolling: true, interval: 1000 },
     cors: true
@@ -322,12 +320,11 @@ export default defineConfig({
 })
 """
 
-
 with open('/home/user/app/vite.config.mjs', 'w') as f:
     f.write(vite_config)
-print('âœ“ vite.config.mjs')
+print('✓ vite.config.mjs')
 
-# ðŸš¨ CRITICAL: Tailwind config - EXACT COPY FROM TYPESCRIPT VERSION
+# Tailwind config
 tailwind_config = """/** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -342,9 +339,9 @@ export default {
 
 with open('/home/user/app/tailwind.config.js', 'w') as f:
     f.write(tailwind_config)
-print('âœ“ tailwind.config.js')
+print('✓ tailwind.config.js')
 
-# ðŸš¨ CRITICAL: PostCSS config - EXACT COPY FROM TYPESCRIPT VERSION
+# PostCSS config
 postcss_config = """export default {
   plugins: {
     tailwindcss: {},
@@ -354,9 +351,9 @@ postcss_config = """export default {
 
 with open('/home/user/app/postcss.config.js', 'w') as f:
     f.write(postcss_config)
-print('âœ“ postcss.config.js')
+print('✓ postcss.config.js')
 
-# ðŸš¨ CRITICAL: Index.html - EXACT COPY FROM TYPESCRIPT VERSION
+# Index.html
 index_html = """<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -372,9 +369,9 @@ index_html = """<!DOCTYPE html>
 
 with open('/home/user/app/index.html', 'w') as f:
     f.write(index_html)
-print('âœ“ index.html')
+print('✓ index.html')
 
-# ðŸš¨ CRITICAL: Main.jsx - EXACT COPY FROM TYPESCRIPT VERSION
+# Main.jsx
 main_jsx = """import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
@@ -388,17 +385,22 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 with open('/home/user/app/src/main.jsx', 'w') as f:
     f.write(main_jsx)
-print('âœ“ src/main.jsx')
+print('✓ src/main.jsx')
 
-# ðŸš¨ CRITICAL: App.jsx with EXPLICIT Tailwind test - EXACT COPY FROM TYPESCRIPT
+# App.jsx with placeholder content
 app_jsx = """function App() {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
       <div className="text-center max-w-2xl">
+        <h1 className="text-4xl font-bold mb-4 text-green-400">🚀 Sandbox Ready!</h1>
         <p className="text-lg text-gray-400">
-          Sandbox Ready<br/>
-          Start building your React app with Vite and Tailwind CSS!
+          Your React app with Vite and Tailwind CSS is ready for development.
         </p>
+        <div className="mt-6 p-4 bg-gray-800 rounded-lg">
+          <p className="text-sm text-gray-300">
+            This placeholder will be replaced when you generate your actual app.
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -408,9 +410,9 @@ export default App"""
 
 with open('/home/user/app/src/App.jsx', 'w') as f:
     f.write(app_jsx)
-print('âœ“ src/App.jsx')
+print('✓ src/App.jsx')
 
-# ðŸš¨ CRITICAL: Index.css with EXPLICIT Tailwind directives - EXACT COPY FROM TYPESCRIPT
+# Index.css with Tailwind directives
 index_css = """@tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -439,20 +441,19 @@ body {
 
 with open('/home/user/app/src/index.css', 'w') as f:
     f.write(index_css)
-print('âœ“ src/index.css')
+print('✓ src/index.css')
 
-print('\\nðŸŽ‰ All files created successfully with COMPLETE Tailwind setup!')
+print('\\n✅ All files created successfully!')
 '''
 
     await _run_in_sandbox(sandbox, setup_script)
     
     # Install dependencies
-    print("[ensure_vite_server] Installing dependencies with Tailwind...")
+    print("[ensure_vite_server] Installing dependencies...")
     install_script = '''
 import subprocess
-import sys
 
-print('Installing npm packages with Tailwind CSS...')
+print('Installing npm packages...')
 result = subprocess.run(
     ['npm', 'install'],
     cwd='/home/user/app',
@@ -461,20 +462,19 @@ result = subprocess.run(
 )
 
 if result.returncode == 0:
-    print('âœ“ Dependencies installed successfully')
-    print('âœ“ Tailwind CSS is now configured and ready!')
+    print('✓ Dependencies installed successfully')
 else:
-    print(f'âš ï¸ Warning: npm install had issues: {result.stderr}')
-    # Continue anyway as it might still work
+    print(f'⚠️ npm install issues: {result.stderr}')
+    print(f'stdout: {result.stdout}')
 '''
     await _run_in_sandbox(sandbox, install_script)
     
-    # Start Vite with explicit Tailwind verification
-    print("[ensure_vite_server] Starting Vite with Tailwind verification...")
+    # Start Vite server
+    print("[ensure_vite_server] Starting Vite server...")
     start_code = '''
 import subprocess, os, time, socket
 
-# kill any previous vite
+# Kill any existing processes
 try:
     subprocess.run(['pkill','-f','vite'], capture_output=True)
     subprocess.run(['pkill','-f','node.*vite'], capture_output=True)
@@ -488,10 +488,8 @@ env['FORCE_COLOR'] = '0'
 env['HOST'] = '0.0.0.0'
 env['PORT'] = '5173'
 env['E2B_SANDBOX_ID'] = '{{SANDBOX_ID}}'
-env['__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS'] = '{{ALLOWED_HOSTS}}'
 
-
-# write logs to files to avoid PIPE buffer deadlocks
+# Start Vite server in background
 log_out = open('/home/user/vite-5173.out','ab', buffering=0)
 log_err = open('/home/user/vite-5173.err','ab', buffering=0)
 
@@ -508,77 +506,83 @@ with open('/tmp/vite-process.pid','w') as f:
     f.write(str(process.pid))
 print(f"VITE_STARTED_PID: {process.pid}")
 
-# wait up to ~25s for port to open
-ok = False
-for i in range(25):
+# Wait for port to be accessible
+port_ready = False
+for i in range(30):  # Increased timeout for deployment
     time.sleep(1)
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
-    rc = s.connect_ex(('localhost',5173))
-    s.close()
-    if rc == 0:
-        print(f"VITE_PORT_ACCESSIBLE_AFTER: {i+1}s")
-        ok = True
-        break
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)  # Increased timeout
+        result = s.connect_ex(('localhost', 5173))
+        s.close()
+        if result == 0:
+            print(f"VITE_PORT_READY_AFTER: {i+1}s")
+            port_ready = True
+            break
+    except Exception as e:
+        print(f"PORT_CHECK_ERROR: {e}")
 
-# verify tailwind files
-all_exist = True
-for file_path in [
+# Verify all required files exist
+files_ok = True
+required_files = [
     '/home/user/app/tailwind.config.js',
-    '/home/user/app/postcss.config.js',
-    '/home/user/app/src/index.css'
-]:
+    '/home/user/app/postcss.config.js', 
+    '/home/user/app/src/index.css',
+    '/home/user/app/src/App.jsx',
+    '/home/user/app/src/main.jsx'
+]
+
+for file_path in required_files:
     if os.path.exists(file_path):
         print(f"✓ {file_path} exists")
         if file_path.endswith('index.css'):
-            content = open(file_path).read()
-            if '@tailwind base' in content:
-                print("✓ Tailwind directives found in index.css")
-            else:
-                print("✖ Missing Tailwind directives in index.css"); all_exist = False
+            try:
+                with open(file_path, 'r') as f:
+                    content = f.read()
+                if '@tailwind base' in content:
+                    print("✓ Tailwind directives confirmed")
+                else:
+                    print("✗ Tailwind directives missing")
+                    files_ok = False
+            except Exception as e:
+                print(f"✗ Error reading {file_path}: {e}")
+                files_ok = False
     else:
-        print(f"✖ {file_path} missing"); all_exist = False
+        print(f"✗ {file_path} missing")
+        files_ok = False
 
-print("TAILWIND_OK", all_exist)
-print("PORT_OK", ok)
-print("VITE_STARTUP_COMPLETE")
+print(f"FILES_STATUS: {'OK' if files_ok else 'FAILED'}")
+print(f"PORT_STATUS: {'OK' if port_ready else 'FAILED'}")
+print(f"OVERALL_STATUS: {'SUCCESS' if (files_ok and port_ready) else 'FAILED'}")
 '''
-# inject sandbox id safely (no outer f-string)
-    allowed_hosts = f"5173-{{sandbox_id}}.e2b.app,5173-{{sandbox_id}}.e2b.dev"
-    start_code = start_code.replace("{{SANDBOX_ID}}", sandbox_id).replace("{{ALLOWED_HOSTS}}", allowed_hosts)
-
-
+    
+    # Replace sandbox ID
+    start_code = start_code.replace("{{SANDBOX_ID}}", sandbox_id)
     
     try:
         start_result = await _run_in_sandbox(sandbox, start_code)
         output = _extract_output_text(start_result)
-        print(f"[ensure_vite_server] Start output: {output}")
+        print(f"[ensure_vite_server] Startup output: {output}")
         
-        # Verify Tailwind is working
-        tailwind_working = (
-            "All Tailwind files are properly configured!" in output and
-            "Tailwind directives found in index.css" in output
-        )
+        # FIXED: Check for the actual success indicators
+        files_ok = "FILES_STATUS: OK" in output
+        port_ok = "PORT_STATUS: OK" in output
+        overall_success = "OVERALL_STATUS: SUCCESS" in output
         
-        if not tailwind_working:
-            print("[ensure_vite_server] âŒ CRITICAL: Tailwind CSS is not properly configured!")
-            return False
+        print(f"[ensure_vite_server] Files OK: {files_ok}")
+        print(f"[ensure_vite_server] Port OK: {port_ok}")
+        print(f"[ensure_vite_server] Overall Success: {overall_success}")
         
-        # Wait for Vite to fully start
-        await asyncio.sleep(appConfig.e2b.viteStartupDelay / 1000.0)
-        
-        # Verify it's working
-        server_running = await verify_vite_server(sandbox, "http://localhost:5173")
-        
-        if tailwind_working and server_running:
-            print("[ensure_vite_server] âœ… SUCCESS: Vite + Tailwind CSS fully configured and running!")
+        if overall_success:
+            print("[ensure_vite_server] ✅ SUCCESS: Vite + Tailwind fully configured!")
             return True
         else:
-            print(f"[ensure_vite_server] âŒ FAILED: Tailwind working: {tailwind_working}, Server running: {server_running}")
+            print("[ensure_vite_server] ❌ FAILED: Setup incomplete")
+            print(f"[ensure_vite_server] Full output: {output}")
             return False
         
     except Exception as e:
-        print(f"[ensure_vite_server] Failed to start Vite: {e}")
+        print(f"[ensure_vite_server] Exception during startup: {e}")
         return False
 
 # In create_ai_sandbox.py

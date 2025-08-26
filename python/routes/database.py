@@ -1,61 +1,102 @@
 import sqlite3
 import json
-import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import contextmanager
 import threading
+import time
+import os  # <-- Make sure os is imported
+
+# --- RENDER/LOCAL DYNAMIC PATH LOGIC ---
+# Render automatically sets the 'RENDER' environment variable to 'true'.
+# We can check for this to determine the environment.
+if os.getenv('RENDER') == 'true':
+    # We are on Render, so use the persistent disk path.
+    # Make sure this matches the Mount Path of your disk on Render.
+    storage_path = Path('/app/data')
+else:
+    # We are not on Render (running locally), so use a local folder.
+    storage_path = Path(__file__).resolve().parent.parent / 'local_data'
+
+# Define the final database path
+DB_PATH = storage_path / 'sandbox_state.db'
+# --- END OF NEW LOGIC ---
+
 
 # Thread-local storage for database connections
 _local = threading.local()
 
-# Database path - use persistent storage
-DB_PATH = Path('/app/data') / 'sandbox_state.db'
+# ... (the rest of your database.py file remains the same) ...
+
+def get_schema_version(conn):
+    try:
+        cursor = conn.execute("PRAGMA user_version")
+        return cursor.fetchone()[0]
+    except:
+        return 0
+
+def set_schema_version(conn, version):
+    conn.execute(f"PRAGMA user_version = {version}")
+
+def migrate_database(conn):
+    current_version = get_schema_version(conn)
+    
+    if current_version < 1:
+        print("[database] Migrating to version 1: Adding session tracking columns...")
+        try:
+            conn.execute('ALTER TABLE sandbox_state ADD COLUMN last_activity INTEGER')
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e): print(f"[database] Warning: {e}")
+        try:
+            conn.execute('ALTER TABLE sandbox_state ADD COLUMN session_id TEXT')
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e): print(f"[database] Warning: {e}")
+        try:
+            conn.execute('ALTER TABLE sandbox_state ADD COLUMN user_ip TEXT')
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e): print(f"[database] Warning: {e}")
+        try:
+            conn.execute('ALTER TABLE conversation_state ADD COLUMN session_id TEXT')
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e): print(f"[database] Warning: {e}")
+        
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS cleanup_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, sandbox_id TEXT,
+                cleanup_time INTEGER, cleanup_reason TEXT, success INTEGER
+            )
+        ''')
+        set_schema_version(conn, 1)
+        print("[database] Migration to version 1 complete")
 
 def init_database():
-    """Initialize the database with required tables"""
     DB_PATH.parent.mkdir(exist_ok=True, parents=True)
-    
     with get_connection() as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS sandbox_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                sandbox_id TEXT,
-                url TEXT,
-                active INTEGER DEFAULT 0,
-                created_at INTEGER,
-                updated_at INTEGER,
+                id INTEGER PRIMARY KEY CHECK (id = 1), sandbox_id TEXT, url TEXT,
+                active INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER,
                 metadata TEXT
             )
         ''')
-        
         conn.execute('''
             CREATE TABLE IF NOT EXISTS conversation_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                state_data TEXT,
-                updated_at INTEGER
+                id INTEGER PRIMARY KEY CHECK (id = 1), state_data TEXT, updated_at INTEGER
             )
         ''')
+        conn.execute('INSERT OR IGNORE INTO sandbox_state (id, active) VALUES (1, 0)')
+        conn.execute("INSERT OR IGNORE INTO conversation_state (id, state_data) VALUES (1, '{}')")
         
-        # Insert default row if not exists
-        conn.execute('''
-            INSERT OR IGNORE INTO sandbox_state (id, active) VALUES (1, 0)
-        ''')
-        
-        conn.execute('''
-            INSERT OR IGNORE INTO conversation_state (id, state_data) VALUES (1, '{}')
-        ''')
+        migrate_database(conn)
         
         conn.commit()
-        print("[database] Database initialized successfully")
+        print("[database] Enhanced database initialized successfully")
 
 @contextmanager
 def get_connection():
-    """Get a database connection with proper error handling"""
     if not hasattr(_local, 'connection') or _local.connection is None:
         _local.connection = sqlite3.connect(str(DB_PATH), timeout=30.0)
         _local.connection.row_factory = sqlite3.Row
-    
     try:
         yield _local.connection
     except Exception as e:
@@ -63,106 +104,113 @@ def get_connection():
         print(f"[database] Error: {e}")
         raise
     finally:
-        # Don't close connection, keep it for reuse in thread
         pass
 
 def close_connection():
-    """Close the thread-local connection"""
     if hasattr(_local, 'connection') and _local.connection:
         _local.connection.close()
         _local.connection = None
 
 def get_sandbox_state() -> Optional[Dict[str, Any]]:
-    """Get current sandbox state from database"""
     try:
         with get_connection() as conn:
-            row = conn.execute(
-                'SELECT * FROM sandbox_state WHERE id = 1'
-            ).fetchone()
-            
+            row = conn.execute('SELECT * FROM sandbox_state WHERE id = 1').fetchone()
             if row and row['active'] and row['sandbox_id']:
                 metadata = json.loads(row['metadata'] or '{}')
                 return {
-                    'sandboxId': row['sandbox_id'],
-                    'url': row['url'],
-                    'active': bool(row['active']),
-                    'createdAt': row['created_at'],
+                    'sandboxId': row['sandbox_id'], 'url': row['url'],
+                    'active': bool(row['active']), 'createdAt': row['created_at'],
                     'updatedAt': row['updated_at'],
+                    'lastActivity': row['last_activity'] if 'last_activity' in row.keys() else None,
+                    'sessionId': row['session_id'] if 'session_id' in row.keys() else None,
+                    'userIP': row['user_ip'] if 'user_ip' in row.keys() else None,
                     **metadata
                 }
     except Exception as e:
         print(f"[database] Error getting sandbox state: {e}")
-    
     return None
 
-def set_sandbox_state(state: Optional[Dict[str, Any]]):
-    """Set sandbox state in database"""
+def set_sandbox_state(state: Optional[Dict[str, Any]], user_ip: str = None, session_id: str = None):
     try:
-        import time
         current_time = int(time.time() * 1000)
-        
         with get_connection() as conn:
             if state:
-                # Extract metadata (everything except core fields)
-                core_fields = {'sandboxId', 'url', 'active', 'createdAt', 'updatedAt'}
+                core_fields = {'sandboxId', 'url', 'active', 'createdAt', 'updatedAt', 'lastActivity', 'sessionId', 'userIP'}
                 metadata = {k: v for k, v in state.items() if k not in core_fields}
-                
+                if not session_id:
+                    import uuid
+                    session_id = str(uuid.uuid4())
                 conn.execute('''
-                    UPDATE sandbox_state 
-                    SET sandbox_id = ?, url = ?, active = 1, 
-                        created_at = COALESCE(created_at, ?), 
-                        updated_at = ?, metadata = ?
-                    WHERE id = 1
+                    UPDATE sandbox_state SET sandbox_id = ?, url = ?, active = 1, 
+                        created_at = COALESCE(created_at, ?), updated_at = ?, last_activity = ?,
+                        session_id = ?, user_ip = ?, metadata = ? WHERE id = 1
                 ''', (
-                    state.get('sandboxId'),
-                    state.get('url'),
-                    state.get('createdAt', current_time),
-                    current_time,
-                    json.dumps(metadata)
+                    state.get('sandboxId'), state.get('url'), state.get('createdAt', current_time),
+                    current_time, current_time, session_id, user_ip, json.dumps(metadata)
                 ))
             else:
-                # Clear state
+                cursor = conn.execute('SELECT sandbox_id FROM sandbox_state WHERE id = 1')
+                row = cursor.fetchone()
+                old_sandbox_id = row['sandbox_id'] if row else None
+                if old_sandbox_id:
+                    conn.execute('''
+                        INSERT INTO cleanup_log (sandbox_id, cleanup_time, cleanup_reason, success)
+                        VALUES (?, ?, ?, ?)
+                    ''', (old_sandbox_id, current_time, 'manual_cleanup', 1))
                 conn.execute('''
-                    UPDATE sandbox_state 
-                    SET sandbox_id = NULL, url = NULL, active = 0, 
-                        updated_at = ?, metadata = '{}'
-                    WHERE id = 1
+                    UPDATE sandbox_state SET sandbox_id = NULL, url = NULL, active = 0, 
+                        updated_at = ?, last_activity = NULL, session_id = NULL,
+                        user_ip = NULL, metadata = '{}' WHERE id = 1
                 ''', (current_time,))
-            
             conn.commit()
             print(f"[database] Sandbox state {'saved' if state else 'cleared'}")
-    
     except Exception as e:
         print(f"[database] Error setting sandbox state: {e}")
 
+def update_activity():
+    try:
+        current_time = int(time.time() * 1000)
+        with get_connection() as conn:
+            conn.execute('UPDATE sandbox_state SET last_activity = ?, updated_at = ? WHERE id = 1 AND active = 1',
+                         (current_time, current_time))
+            conn.commit()
+    except Exception as e:
+        print(f"[database] Error updating activity: {e}")
+
 def get_conversation_state() -> Dict[str, Any]:
-    """Get conversation state from database"""
     try:
         with get_connection() as conn:
-            row = conn.execute(
-                'SELECT state_data FROM conversation_state WHERE id = 1'
-            ).fetchone()
-            
+            row = conn.execute('SELECT state_data FROM conversation_state WHERE id = 1').fetchone()
             if row and row['state_data']:
                 return json.loads(row['state_data'])
     except Exception as e:
         print(f"[database] Error getting conversation state: {e}")
-    
     return {}
 
 def set_conversation_state(state: Dict[str, Any]):
-    """Set conversation state in database"""
     try:
-        import time
         with get_connection() as conn:
-            conn.execute('''
-                UPDATE conversation_state 
-                SET state_data = ?, updated_at = ?
-                WHERE id = 1
-            ''', (json.dumps(state), int(time.time() * 1000)))
+            conn.execute('UPDATE conversation_state SET state_data = ?, updated_at = ? WHERE id = 1',
+                         (json.dumps(state), int(time.time() * 1000)))
             conn.commit()
     except Exception as e:
         print(f"[database] Error setting conversation state: {e}")
 
-# Initialize database on import
+def get_cleanup_stats():
+    try:
+        with get_connection() as conn:
+            row = conn.execute('''
+                SELECT COUNT(*) as total_cleanups, SUM(success) as successful_cleanups,
+                       MAX(cleanup_time) as last_cleanup
+                FROM cleanup_log WHERE cleanup_time > ?
+            ''', (int(time.time() * 1000) - 86400000,)).fetchone()
+            return {
+                'totalCleanups': row['total_cleanups'] if row else 0,
+                'successfulCleanups': row['successful_cleanups'] if row else 0,
+                'lastCleanup': row['last_cleanup'] if row else None
+            }
+    except Exception as e:
+        print(f"[database] Error getting cleanup stats: {e}")
+        return {}
+
 init_database()

@@ -44,7 +44,76 @@ def import_module_from_path(module_name: str, file_path: Path):
         print(f"[main] Error importing {module_name}: {e}")
         traceback.print_exc()
         return None
+# Add this to your main.py for automatic session cleanup
 
+import asyncio
+import time
+from datetime import datetime, timedelta
+
+class SessionManager:
+    def __init__(self):
+        self.session_timeout = 30 * 60  # 30 minutes
+        self.cleanup_interval = 5 * 60   # Check every 5 minutes
+        self.running = False
+        
+    async def start_cleanup_task(self):
+        """Start background task to clean up inactive sessions"""
+        self.running = True
+        print("[SessionManager] Starting automatic cleanup task...")
+        
+        while self.running:
+            try:
+                await self.cleanup_inactive_sessions()
+                await asyncio.sleep(self.cleanup_interval)
+            except Exception as e:
+                print(f"[SessionManager] Cleanup error: {e}")
+                await asyncio.sleep(self.cleanup_interval)
+    
+    async def cleanup_inactive_sessions(self):
+        """Clean up sessions that have been inactive too long"""
+        from routes.database import get_sandbox_state, set_sandbox_state
+        
+        try:
+            state = get_sandbox_state()
+            if not state:
+                return
+            
+            # Check if session is too old
+            current_time = int(time.time() * 1000)
+            last_updated = state.get('updatedAt', 0)
+            
+            if current_time - last_updated > (self.session_timeout * 1000):
+                print(f"[SessionManager] Cleaning up inactive session (idle for {(current_time - last_updated) // 1000}s)")
+                
+                # Kill the sandbox
+                kill_module = None
+                try:
+                    import sys
+                    main_module = sys.modules.get("main")
+                    if main_module and hasattr(main_module, "MODULES"):
+                        kill_module = main_module.MODULES.get("kill_sandbox")
+                except:
+                    pass
+                
+                if kill_module:
+                    try:
+                        result = await kill_module.POST()
+                        print(f"[SessionManager] Cleanup result: {result.get('message', 'Unknown')}")
+                    except Exception as e:
+                        print(f"[SessionManager] Kill sandbox error: {e}")
+                        # Emergency cleanup
+                        set_sandbox_state(None)
+                
+        except Exception as e:
+            print(f"[SessionManager] Session cleanup error: {e}")
+    
+    def stop(self):
+        """Stop the cleanup task"""
+        self.running = False
+        print("[SessionManager] Stopping cleanup task...")
+
+# Global session manager
+session_manager = SessionManager()
 # --- Load All Route Modules (No changes) ---
 MODULES: Dict[str, Any] = {}
 def _load_all():
@@ -120,8 +189,17 @@ async def get_active_sandbox() -> Any:
 async def lifespan(app: FastAPI):
     print("🚀 Backend starting...")
     init_database()
+    cleanup_task = asyncio.create_task(session_manager.start_cleanup_task())
     yield
     print("🛑 Backend shutting down...")
+    session_manager.stop()
+    cleanup_task.cancel()
+
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    # close_connection()
     close_connection()
 atexit.register(close_connection)
 
@@ -160,10 +238,28 @@ async def health():
 
 # --- Sandbox Management ---
 @app.post("/api/create-ai-sandbox")
-async def api_create_ai_sandbox():
+async def api_create_ai_sandbox(request: Request):
     mod = MODULES.get("create_ai_sandbox")
     if not mod: return create_error_response("Create sandbox module not loaded")
+    
+    # Get client IP
+    client_ip = request.client.host if hasattr(request, 'client') else 'unknown'
+    
     result = await maybe_await(mod.POST())
+    
+    # Update state with IP tracking if successful
+    if result.get('success'):
+        try:
+            from routes.database import get_sandbox_state, set_sandbox_state
+            state = get_sandbox_state()
+            if state:
+                # Update with IP and session info
+                import uuid
+                session_id = str(uuid.uuid4())
+                set_sandbox_state(state, user_ip=client_ip, session_id=session_id)
+        except Exception as e:
+            print(f"[create_sandbox] Error updating state with IP: {e}")
+    
     return CustomJSONResponse(result)
 
 @app.post("/api/kill-sandbox")
@@ -389,8 +485,34 @@ async def api_analyze_edit_intent(request: Request, sandbox: Any = Depends(get_a
     body = await request.json()
     result = await maybe_await(mod.POST(body))
     return CustomJSONResponse(result)
+from fastapi import Request
+import time
 
-
+@app.middleware("http")
+async def activity_tracking_middleware(request: Request, call_next):
+    """Track user activity for session management"""
+    
+    # Update activity on any API call
+    if request.url.path.startswith("/api/"):
+        try:
+            from routes.database import update_activity
+            update_activity()
+        except Exception as e:
+            print(f"[activity_tracking] Error updating activity: {e}")
+    
+    response = await call_next(request)
+    return response
+@app.get("/api/debug/cleanup-stats")
+async def debug_cleanup_stats():
+    try:
+        from routes.database import get_cleanup_stats
+        stats = get_cleanup_stats()
+        return CustomJSONResponse({
+            "success": True,
+            **stats
+        })
+    except Exception as e:
+        return create_error_response(f"Failed to get cleanup stats: {str(e)}")
 # --- Main Entrypoint ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))

@@ -133,6 +133,89 @@ def sanitize_and_validate_jsx(content: str, file_path: str) -> str:
 # --------------------------
 # Improved Sandbox Interaction
 # --------------------------
+# Add this to your apply_ai_code_stream.py to prevent file pollution
+
+async def clean_components_directory_before_generation(sandbox):
+    """Clean components directory before creating new components to prevent pollution"""
+    
+    cleanup_code = """
+import os
+import shutil
+import json
+
+components_dir = "/home/user/app/src/components"
+cleaned_files = []
+
+print("=== CLEANING COMPONENTS DIRECTORY ===")
+
+if os.path.exists(components_dir):
+    try:
+        # List all files before cleanup
+        existing_files = []
+        for root, dirs, files in os.walk(components_dir):
+            for file in files:
+                if file.endswith(('.jsx', '.js', '.tsx', '.ts')):
+                    file_path = os.path.join(root, file)
+                    existing_files.append(os.path.relpath(file_path, "/home/user/app"))
+        
+        if existing_files:
+            print(f"Found {len(existing_files)} existing component files:")
+            for f in existing_files:
+                print(f"  - {f}")
+            
+            # Remove the entire components directory
+            shutil.rmtree(components_dir)
+            cleaned_files = existing_files
+            print("✅ Removed all existing components")
+        else:
+            print("✅ Components directory was already clean")
+    except Exception as e:
+        print(f"❌ Error cleaning components: {e}")
+else:
+    print("✅ Components directory doesn't exist (clean start)")
+
+# Recreate clean components directory
+os.makedirs(components_dir, exist_ok=True)
+print("✅ Created fresh components directory")
+
+# Return results
+result = {
+    "cleaned": True,
+    "filesRemoved": len(cleaned_files),
+    "removedFiles": cleaned_files
+}
+
+print(f"CLEANUP_RESULT: {json.dumps(result)}")
+"""
+    
+    try:
+        from routes.apply_ai_code_stream import _run_in_sandbox
+        result = await _run_in_sandbox(sandbox, cleanup_code)
+        
+        if hasattr(result, 'logs') and hasattr(result.logs, 'stdout'):
+            output = ''.join(result.logs.stdout) if isinstance(result.logs.stdout, list) else str(result.logs.stdout or "")
+        else:
+            output = str(result)
+        
+        print(f"[clean_components] {output}")
+        
+        # Parse cleanup result
+        import json
+        import re
+        result_match = re.search(r'CLEANUP_RESULT: ({.*})', output)
+        if result_match:
+            try:
+                cleanup_result = json.loads(result_match.group(1))
+                return cleanup_result
+            except:
+                pass
+        
+        return {"cleaned": "CLEANUP_RESULT" in output, "filesRemoved": 0, "removedFiles": []}
+        
+    except Exception as e:
+        print(f"[clean_components] Error: {e}")
+        return {"cleaned": False, "error": str(e)}
+
 async def _run_in_sandbox(sandbox: Any, code: str) -> Dict[str, Any]:
     """Enhanced sandbox execution with better error handling"""
     async def _runner(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -719,7 +802,8 @@ async def POST(request: Any):
         if JSONResponse is None:
             return error_response
         return JSONResponse(content=error_response, status_code=200)
-
+    
+    cleanup_result = await clean_components_directory_before_generation(sandbox)
     # Enhanced streaming SSE
     async def event_stream():
         """Enhanced event stream with better error handling"""
@@ -742,6 +826,13 @@ async def POST(request: Any):
 
         try:
             # Start
+            if cleanup_result.get("filesRemoved", 0) > 0:
+                async for chunk in send_progress({
+                    "type": "cleanup", 
+                    "message": f"Cleaned {cleanup_result['filesRemoved']} old component files for fresh start",
+                    "removedFiles": cleanup_result["removedFiles"]
+                }):
+                    yield chunk
             async for chunk in send_progress({"type": "start", "message": "Starting code application with FIXED parsing..."}):
                 yield chunk
 

@@ -222,7 +222,53 @@ useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showHomeScreen]);
+  // Add this NEW useEffect after the existing Escape key handler
+// useEffect(() => {
+//   // Cleanup sandbox when user leaves the page
+//   const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+//     try {
+//       // Get the API base URL
+//       const baseUrl = process.env.PYTHON_API_URL || process.env.NEXT_PUBLIC_PYTHON_API_URL || '';
+      
+//       // Kill sandbox when user closes/refreshes
+//       await fetch(baseUrl + '/api/kill-sandbox', { 
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json'
+//         },
+//         keepalive: true // Ensures request completes even if page closes
+//       });
+//     } catch (error) {
+//       console.log('Cleanup request failed:', error);
+//     }
+//   };
+
+//   const handleUnload = async () => {
+//     try {
+//       const baseUrl = process.env.PYTHON_API_URL || process.env.NEXT_PUBLIC_PYTHON_API_URL || '';
+      
+//       await fetch(baseUrl + '/api/kill-sandbox', { 
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json'
+//         },
+//         keepalive: true
+//       });
+//     } catch (error) {
+//       console.log('Cleanup request failed:', error);
+//     }
+//   };
+
+//   // Add event listeners
+//   window.addEventListener('beforeunload', handleBeforeUnload);
+//   window.addEventListener('unload', handleUnload);
   
+//   // Cleanup event listeners on component unmount
+//   return () => {
+//     window.removeEventListener('beforeunload', handleBeforeUnload);
+//     window.removeEventListener('unload', handleUnload);
+//   };
+// }, []); // Empty dependency array means this runs once on mount
   // Start capturing screenshot if URL is provided on mount (from home screen)
   // Start capturing screenshot if URL is provided on mount (from home screen)
 useEffect(() => {

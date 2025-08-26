@@ -92,9 +92,7 @@ async def maybe_await(value: Any) -> Any:
 # In main.py, REPLACE your current get_active_sandbox function with this one.
 
 async def get_active_sandbox() -> Any:
-    """
-    FastAPI dependency with automatic sandbox recreation on failure
-    """
+    """FastAPI dependency with automatic sandbox recreation on failure"""
     if not E2BSandbox:
         raise HTTPException(status_code=500, detail="E2B SDK is not installed on the server.")
 
@@ -108,14 +106,19 @@ async def get_active_sandbox() -> Any:
     try:
         api_key = os.getenv("E2B_API_KEY")
         sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key)
+        
+        # TEST the connection with a simple command
+        test_result = sandbox.run_code("print('connection test')")
+        
         return sandbox
     except Exception as e:
         print(f"[dependency] Sandbox {sandbox_id} connection failed: {e}")
-        # Clear the expired state
+        
+        # CRITICAL FIX: Clear the expired state immediately
         set_sandbox_state(None)
+        print(f"[dependency] Cleared expired sandbox state: {sandbox_id}")
+        
         raise HTTPException(status_code=404, detail="Sandbox expired. Create a new one via POST /api/create-ai-sandbox.")
-
-# --- FastAPI Lifespan & App Initialization (Simplified) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Backend starting...")
@@ -208,8 +211,7 @@ async def api_sandbox_status():
             api_key = os.getenv("E2B_API_KEY")
             sandbox = E2BSandbox.connect(state["sandboxId"], api_key=api_key)
             # Test connection with a simple operation
-            if hasattr(sandbox, 'run_code'):
-                test_result = sandbox.run_code("print('test')")
+            test_result = sandbox.run_code("print('test')")
             
             return CustomJSONResponse({
                 "success": True, 
@@ -220,8 +222,11 @@ async def api_sandbox_status():
             })
     except Exception as e:
         print(f"[sandbox-status] Sandbox {state['sandboxId']} verification failed: {e}")
-        # Clear expired sandbox state
+        
+        # AUTOMATICALLY clear expired sandbox state
         set_sandbox_state(None)
+        print(f"[sandbox-status] Auto-cleared expired sandbox: {state['sandboxId']}")
+        
         return CustomJSONResponse({
             "success": True, 
             "active": False, 

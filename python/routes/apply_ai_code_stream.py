@@ -11,6 +11,7 @@ import asyncio
 import unicodedata
 from types import SimpleNamespace
 from pathlib import Path
+from routes.database import get_sandbox_state, set_sandbox_state
 # from routes.state_manager import save_state/
 # Responses for main_app to return directly
 try:
@@ -53,23 +54,32 @@ def sanitize_content_for_utf8(content: str) -> str:
     if not isinstance(content, str):
         return str(content)
     
-    # Fix encoding issues
-    content = content.encode('utf-8', errors='replace').decode('utf-8')
-    
-    # Fix smart quotes (main cause of JSX syntax errors)
-    replacements = {
-        '"': '"',    # Left double quotation mark
-        '"': '"',    # Right double quotation mark  
-        ''': "'",    # Left single quotation mark
-        ''': "'",    # Right single quotation mark
-        '–': '-',    # En dash
-        '—': '--',   # Em dash
-        '…': '...',  # Horizontal ellipsis
-        ' ': ' ',    # Non-breaking space
+    # Fix smart quotes - comprehensive mapping
+    smart_quotes = {
+        '\u201c': '"',  # Left double quotation mark
+        '\u201d': '"',  # Right double quotation mark
+        '\u2018': "'",  # Left single quotation mark
+        '\u2019': "'",  # Right single quotation mark
+        '\u2013': '-',  # En dash
+        '\u2014': '--', # Em dash
+        '\u2026': '...', # Horizontal ellipsis
+        '\u00a0': ' ',  # Non-breaking space
+        # Additional problematic characters
+        '\u00b4': "'",  # Acute accent (often mistaken for apostrophe)
+        '\u0060': "'",  # Grave accent
+        '\u00e9': 'e',  # é -> e
+        '\u00e8': 'e',  # è -> e
     }
     
-    for old, new in replacements.items():
+    for old, new in smart_quotes.items():
         content = content.replace(old, new)
+    
+    # Ensure valid UTF-8
+    content = content.encode('utf-8', errors='ignore').decode('utf-8')
+    
+    # Remove any remaining non-printable characters except newlines and tabs
+    import re
+    content = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
     
     return content
 def sanitize_and_validate_jsx(content: str, file_path: str) -> str:
@@ -356,79 +366,124 @@ print("=== END DEBUG INFO ===")
 # --------------------------
 # Force Vite Reload Function
 # --------------------------
-async def force_vite_reload_after_changes(sandbox, files_changed):
-    """FIXED: More reliable Vite restart"""
+async def debug_sandbox_files(sandbox):
+    """Debug what files actually exist"""
+    debug_code = '''
+import os
+print("=== FILE DEBUG ===")
+app_dir = "/home/user/app/src"
+if os.path.exists(app_dir):
+    for root, dirs, files in os.walk(app_dir):
+        for file in files:
+            full_path = os.path.join(root, file)
+            try:
+                with open(full_path, 'r') as f:
+                    content = f.read()
+                rel_path = os.path.relpath(full_path, "/home/user/app")
+                print(f"{rel_path}: {len(content)} chars")
+                if len(content) < 200:
+                    print(f"  Content: {repr(content[:100])}")
+            except Exception as e:
+                print(f"{full_path}: ERROR - {e}")
+else:
+    print("src/ directory missing!")
+print("=== END DEBUG ===")
+'''
     
-    restart_code = f"""
+    try:
+        result = await _run_in_sandbox(sandbox, debug_code)
+        output = _extract_output_text(result)
+        return output
+    except Exception as e:
+        return f"Debug error: {e}"
+    
+async def debug_sandbox_files(sandbox):
+    """Debug what files actually exist"""
+    debug_code = '''
+import os
+print("=== FILE DEBUG ===")
+app_dir = "/home/user/app/src"
+if os.path.exists(app_dir):
+    for root, dirs, files in os.walk(app_dir):
+        for file in files:
+            full_path = os.path.join(root, file)
+            try:
+                with open(full_path, 'r') as f:
+                    content = f.read()
+                rel_path = os.path.relpath(full_path, "/home/user/app")
+                print(f"{rel_path}: {len(content)} chars")
+                if len(content) < 200:
+                    print(f"  Content: {repr(content[:100])}")
+            except Exception as e:
+                print(f"{full_path}: ERROR - {e}")
+else:
+    print("src/ directory missing!")
+print("=== END DEBUG ===")
+'''
+    
+    try:
+        result = await _run_in_sandbox(sandbox, debug_code)
+        output = _extract_output_text(result)
+        return output
+    except Exception as e:
+        return f"Debug error: {e}"
+
+async def force_vite_reload_after_changes(sandbox, files_changed):
+    """Simplified but effective Vite restart"""
+    
+    restart_code = '''
 import subprocess
 import time
-import socket
-
-print("=== RESTARTING VITE FOR FILE CHANGES ===")
-
-# Kill existing Vite processes
-subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-subprocess.run(['pkill', '-f', 'node.*vite'], capture_output=True)
-time.sleep(3)
-
-# Clear Vite cache
-subprocess.run(['rm', '-rf', 'node_modules/.vite'], capture_output=True)
-subprocess.run(['rm', '-rf', '.vite'], capture_output=True)
-
-# Start Vite with better error handling
 import os
+
+print("=== RESTARTING VITE ===")
+
+# Kill existing processes
+subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
+subprocess.run(['pkill', '-f', 'node'], capture_output=True)
+time.sleep(2)
+
+# Clear cache
+subprocess.run(['rm', '-rf', '/home/user/app/node_modules/.vite'], capture_output=True)
+subprocess.run(['rm', '-rf', '/home/user/app/.vite'], capture_output=True)
+
+# Change to app directory
 os.chdir('/home/user/app')
 
+# Start Vite
 try:
-    process = subprocess.Popen(
+    proc = subprocess.Popen(
         ['npm', 'run', 'dev'],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         preexec_fn=os.setsid if hasattr(os, 'setsid') else None
     )
     
-    print(f"Vite started with PID: {{process.pid}}")
+    print(f"Started Vite with PID: {proc.pid}")
+    time.sleep(8)
     
-    # Wait longer for startup
-    time.sleep(10)
+    # Test port
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(('localhost', 5173))
+    sock.close()
     
-    # Test if server is responding
-    for attempt in range(15):
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
-            result = sock.connect_ex(('localhost', 5173))
-            sock.close()
-            
-            if result == 0:
-                print("SUCCESS: Vite server is responding")
-                break
-        except:
-            pass
-        time.sleep(1)
+    if result == 0:
+        print("SUCCESS: Vite server responding")
     else:
-        print("WARNING: Vite server may not be responding")
+        print("WARNING: Port 5173 not responding")
         
-    # Check for errors in stderr
-    try:
-        outs, errs = process.communicate(timeout=1)
-    except:
-        outs, errs = "", ""
-        
-    if errs and "error" in errs.lower():
-        print(f"VITE ERRORS: {{errs}}")
-    
 except Exception as e:
-    print(f"FAILED to start Vite: {{e}}")
+    print(f"ERROR: {e}")
 
 print("=== RESTART COMPLETE ===")
-"""
+'''
 
     try:
         result = await _run_in_sandbox(sandbox, restart_code)
         output = _extract_output_text(result)
         print(f"[force_vite_reload] {output}")
-        return "SUCCESS: Vite server is responding" in output
+        return "SUCCESS: Vite server responding" in output
     except Exception as e:
         print(f"[force_vite_reload] Error: {e}")
         return False
@@ -493,8 +548,21 @@ def parse_ai_response(response: str) -> Dict[str, Any]:
     }
 
     print(f"[parse_ai_response] Parsing response of {len(response)} characters")
-
+    response = sanitize_content_for_utf8(response)
     # Function to extract packages from import statements
+    import re
+    
+    file_pattern = r'<file\s+path="([^"]+)"[^>]*>(.*?)</file>'
+    matches = re.findall(file_pattern, response, re.DOTALL)
+    for path, file_content in matches:
+        clean_content = file_content.strip()
+        if clean_content and len(clean_content) > 10:
+            sections["files"].append({
+                "path": path,
+                "content": clean_content
+            })
+            print(f"[parse_ai_response] Added: {path} ({len(clean_content)} chars)")
+    
     def extract_packages_from_code(content: str) -> List[str]:
         packages = []
         # Match ES6 imports
@@ -630,7 +698,22 @@ def parse_ai_response(response: str) -> Dict[str, Any]:
         if css_content:
             file_map["src/index.css"] = {"content": sanitize_content_for_utf8(css_content.group(1).strip()), "is_complete": False}
             print("[parse_ai_response] Last resort: extracted CSS as index.css")
-
+    if not sections["files"]:
+        print("[parse_ai_response] No XML files found, trying code blocks")
+        code_pattern = r'```(?:jsx|js|css|html)\s*\n(?://\s*)?([^\n]+\.(jsx?|css|html))\s*\n(.*?)\n```'
+        code_matches = re.findall(code_pattern, response, re.DOTALL)
+        
+        for path, ext, file_content in code_matches:
+            if not path.startswith('src/'):
+                path = f'src/{path}'
+            
+            clean_content = file_content.strip()
+            if clean_content:
+                sections["files"].append({
+                    "path": path,
+                    "content": clean_content
+                })
+                print(f"[parse_ai_response] Added from code block: {path}")
     # Convert file_map to sections.files
     for path, info in file_map.items():
         if not info["is_complete"]:
@@ -803,7 +886,9 @@ async def POST(request: Any):
             return error_response
         return JSONResponse(content=error_response, status_code=200)
     
-    cleanup_result = await clean_components_directory_before_generation(sandbox)
+    cleanup_result = {}
+    if not is_edit:
+        cleanup_result = await clean_components_directory_before_generation(sandbox)
     # Enhanced streaming SSE
     async def event_stream():
         """Enhanced event stream with better error handling"""
@@ -826,7 +911,7 @@ async def POST(request: Any):
 
         try:
             # Start
-            if cleanup_result.get("filesRemoved", 0) > 0:
+            if not is_edit and cleanup_result.get("filesRemoved", 0) > 0:
                 async for chunk in send_progress({
                     "type": "cleanup", 
                     "message": f"Cleaned {cleanup_result['filesRemoved']} old component files for fresh start",
@@ -975,6 +1060,16 @@ async def POST(request: Any):
                         fcontent = fcontent.encode('ascii', errors='ignore').decode('ascii')
                         escaped_content = json.dumps(fcontent)
 
+                    # Sanitize content first
+                    fcontent = sanitize_content_for_utf8(fcontent)
+
+                    try:
+                        escaped_content = json.dumps(fcontent, ensure_ascii=True)
+                    except Exception as e:
+                        print(f"[apply-ai-code-stream] JSON encoding error for {fpath}: {e}")
+                        fcontent = fcontent.encode('ascii', errors='ignore').decode('ascii')
+                        escaped_content = json.dumps(fcontent, ensure_ascii=True)
+
                     write_code = f"""
 import os
 import json
@@ -983,31 +1078,28 @@ file_path = "{full_path}"
 file_content = {escaped_content}
 
 try:
-    if isinstance(file_content, str):
-        file_content.encode('utf-8')
-    
+    # Ensure directory exists
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     
+    # Write file
     with open(file_path, "w", encoding="utf-8", errors="replace") as f:
         f.write(file_content)
     
+    # Verify file was written
     if os.path.exists(file_path):
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            written_content = f.read()
+            verification_content = f.read()
         
-        if len(written_content) > 0:
+        if len(verification_content) > 0:
             print("SUCCESS: File written and verified")
-            print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "size": len(written_content), "success": True}})}}")
+            print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "size": len(verification_content), "success": True}})}}")
         else:
             print("ERROR: File exists but is empty")
             print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "success": False, "error": "Empty file"}})}}")
     else:
         print("ERROR: File was not created")
         print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "success": False, "error": "File not created"}})}}")
-    
-except UnicodeEncodeError as e:
-    print(f"ERROR: Unicode encoding error: {{str(e)}}")
-    print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "success": False, "error": f"Unicode encoding error: {{str(e)}}"}})}}")
+        
 except Exception as e:
     print(f"ERROR: Failed to write file: {{str(e)}}")
     print(f"WRITE_RESULT:{{json.dumps({{"path": "{fpath}", "success": False, "error": str(e)}})}}")
@@ -1077,40 +1169,41 @@ except Exception as e:
                     yield chunk
                 
                 try:
-                    # Get updated files from sandbox
                     main_app = sys.modules.get("main")
                     if main_app and hasattr(main_app, "MODULES"):
                         get_files_module = main_app.MODULES.get("get_sandbox_files")
                         if get_files_module:
+                            # Pass the active sandbox instance to the module before calling it
+                            get_files_module.active_sandbox = sandbox
                             cache_result = await get_files_module.GET()
                             
                             if cache_result.get("success") and cache_result.get("manifest"):
-                                # Ensure sandbox_state exists and update file cache
-                                global sandbox_state
-                                if sandbox_state is None:
-                                    sandbox_state = {}
+                                # Get the current full state from the DB
+                                current_state = get_sandbox_state() or {}
                                 
-                                if "fileCache" not in sandbox_state:
-                                    sandbox_state["fileCache"] = {}
+                                # Update the fileCache with the new manifest
+                                current_state["fileCache"] = {"manifest": cache_result["manifest"]}
                                 
-                                sandbox_state["fileCache"]["manifest"] = cache_result["manifest"]
-                                sandbox_state["fileCache"]["files"] = cache_result["manifest"]["files"]
-                                
-                                files_count = len(cache_result["manifest"]["files"])
-                                print(f"[apply-ai-code-stream] ✅ File cache updated with {files_count} files")
+                                # Persist the updated state back to the database
+                                set_sandbox_state(current_state)
+
+                                files_count = len(cache_result["manifest"].get("files", {}))
+                                print(f"[apply-ai-code-stream] ✅ Central state updated with {files_count} files.")
                                 
                                 async for chunk in send_progress({ "type": "success", "message": f"File cache updated with {files_count} files - ready for edits" }):
                                     yield chunk
                             else:
-                                print("[apply-ai-code-stream] ❌ Failed to update file cache")
+                                print("[apply-ai-code-stream] ❌ Failed to get new manifest to update file cache.")
                                 async for chunk in send_progress({ "type": "warning", "message": "File cache update failed - edits may not work" }):
                                     yield chunk
-                        
-                        # save_state(main_app.MODULES)
-                        
+                        else:
+                             print("[apply-ai-code-stream] ❌ 'get_sandbox_files' module not found.")
+
                 except Exception as e:
-                    print(f"[apply-ai-code-stream] File cache update error: {e}")
-                    async for chunk in send_progress({ "type": "warning", "message": "File cache update failed" }):
+                    print(f"[apply-ai-code-stream] File cache state update error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    async for chunk in send_progress({ "type": "warning", "message": f"File cache update failed: {e}" }):
                         yield chunk
                 # ... (command execution logic remains the same) ...
             
@@ -1130,7 +1223,10 @@ except Exception as e:
                 else:
                     async for chunk in send_progress({ "type": "warning", "message": "Vite restart failed - try manual refresh" }):
                         yield chunk
-
+            # Add this after the file writing loop
+            if results["filesCreated"] or results["filesUpdated"]:
+                debug_output = await debug_sandbox_files(sandbox)
+                print(f"[apply-ai-code-stream] DEBUG: {debug_output}")
             # Final completion
             async for chunk in send_progress({
                 "type": "complete",

@@ -9,7 +9,10 @@ import time
 from types import SimpleNamespace
 
 # ADD THIS: Import the new centralized state management functions
-from routes.state_manager import set_sandbox_state
+# Replace the import at the top
+from routes.database import set_sandbox_state
+
+# Rest of the file remains the same
 
 # LangChain and E2B imports remain the same
 try:

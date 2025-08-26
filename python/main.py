@@ -15,7 +15,8 @@ import uvicorn
 import inspect
 import json
 import traceback
-
+from routes.database import init_database, close_connection
+import atexit
 # ADDED: Centralized state and E2B imports
 from routes.state_manager import get_sandbox_state
 try:
@@ -88,34 +89,41 @@ async def maybe_await(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
 # --- NEW: FastAPI Dependency for Sandbox Management ---
+# In main.py, REPLACE your current get_active_sandbox function with this one.
+
 async def get_active_sandbox() -> Any:
     """
-    FastAPI dependency to get a connection to the currently active sandbox.
-    It reads the ID from our central state file and connects.
-    This will be used by any endpoint that needs to interact with the sandbox.
+    FastAPI dependency with automatic sandbox recreation on failure
     """
     if not E2BSandbox:
         raise HTTPException(status_code=500, detail="E2B SDK is not installed on the server.")
 
+    from routes.database import get_sandbox_state, set_sandbox_state
     state = get_sandbox_state()
+    
     if not state or not state.get("sandboxId"):
         raise HTTPException(status_code=404, detail="No active sandbox. Please create one first via POST /api/create-ai-sandbox.")
 
     sandbox_id = state["sandboxId"]
     try:
         api_key = os.getenv("E2B_API_KEY")
-        sandbox =E2BSandbox.connect(sandbox_id, api_key=api_key)
+        sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key)
         return sandbox
     except Exception as e:
-        print(f"[dependency] Failed to connect to sandbox {sandbox_id}: {e}")
-        raise HTTPException(status_code=503, detail=f"Could not connect to the active sandbox. It may have timed out.")
+        print(f"[dependency] Sandbox {sandbox_id} connection failed: {e}")
+        # Clear the expired state
+        set_sandbox_state(None)
+        raise HTTPException(status_code=404, detail="Sandbox expired. Create a new one via POST /api/create-ai-sandbox.")
 
 # --- FastAPI Lifespan & App Initialization (Simplified) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Backend starting...")
+    init_database()
     yield
     print("🛑 Backend shutting down...")
+    close_connection()
+atexit.register(close_connection)
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -165,14 +173,62 @@ async def api_kill_sandbox():
     result = await maybe_await(mod.POST())
     return CustomJSONResponse(result)
 
+@app.get("/api/debug/storage")
+async def debug_storage():
+    from pathlib import Path
+    
+    storage_path = Path('/app/data')
+    
+    return {
+        "path": str(storage_path),
+        "exists": storage_path.exists(),
+        "is_dir": storage_path.is_dir(),
+        "writable": os.access(storage_path, os.W_OK),
+        "files": list(storage_path.glob('*')) if storage_path.exists() else [],
+        "db_exists": (storage_path / 'sandbox_state.db').exists()
+    }
+
 @app.get("/api/sandbox-status")
 async def api_sandbox_status():
+    from routes.database import get_sandbox_state, set_sandbox_state
+    
     state = get_sandbox_state()
-    if state:
-        return CustomJSONResponse({"success": True, "active": True, "healthy": True, "sandboxData": state, "message": "Sandbox is active."})
-    else:
-        return CustomJSONResponse({"success": True, "active": False, "healthy": False, "sandboxData": None, "message": "No active sandbox."})
-
+    if not state:
+        return CustomJSONResponse({
+            "success": True, 
+            "active": False, 
+            "healthy": False, 
+            "sandboxData": None, 
+            "message": "No active sandbox."
+        })
+    
+    # Verify sandbox is still accessible
+    try:
+        if E2BSandbox:
+            api_key = os.getenv("E2B_API_KEY")
+            sandbox = E2BSandbox.connect(state["sandboxId"], api_key=api_key)
+            # Test connection with a simple operation
+            if hasattr(sandbox, 'run_code'):
+                test_result = sandbox.run_code("print('test')")
+            
+            return CustomJSONResponse({
+                "success": True, 
+                "active": True, 
+                "healthy": True, 
+                "sandboxData": state, 
+                "message": "Sandbox is active."
+            })
+    except Exception as e:
+        print(f"[sandbox-status] Sandbox {state['sandboxId']} verification failed: {e}")
+        # Clear expired sandbox state
+        set_sandbox_state(None)
+        return CustomJSONResponse({
+            "success": True, 
+            "active": False, 
+            "healthy": False, 
+            "sandboxData": None, 
+            "message": "Sandbox has expired and was cleared."
+        })
 # --- Web Scraping ---
 @app.post("/api/scrape-screenshot")
 async def api_scrape_screenshot(request: Request, sandbox: Any = Depends(get_active_sandbox)):

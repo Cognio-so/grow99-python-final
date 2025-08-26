@@ -95,12 +95,13 @@ async def get_active_sandbox() -> Any:
     """FastAPI dependency with automatic sandbox recreation on failure"""
     if not E2BSandbox:
         raise HTTPException(status_code=500, detail="E2B SDK is not installed on the server.")
-    
-    # Fetch sandbox state from the database
+
+    from routes.database import get_sandbox_state, set_sandbox_state
     state = get_sandbox_state()
+    
     if not state or not state.get("sandboxId"):
         raise HTTPException(status_code=404, detail="No active sandbox. Please create one first via POST /api/create-ai-sandbox.")
-    
+
     sandbox_id = state["sandboxId"]
     try:
         api_key = os.getenv("E2B_API_KEY")
@@ -108,20 +109,16 @@ async def get_active_sandbox() -> Any:
         
         # TEST the connection with a simple command
         test_result = sandbox.run_code("print('connection test')")
+        
         return sandbox
-
     except Exception as e:
         print(f"[dependency] Sandbox {sandbox_id} connection failed: {e}")
         
-        # If the sandbox connection fails (timeout or error), clear the expired sandbox state
-        from routes.kill_sandbox import POST as kill_sandbox
-        await kill_sandbox()  # This kills the expired sandbox
-
-        # Now, create a new sandbox immediately
-        from routes.create_ai_sandbox import POST as create_sandbox
-        new_sandbox = await create_sandbox()  # This creates the new sandbox
-        return new_sandbox
-
+        # CRITICAL FIX: Clear the expired state immediately
+        set_sandbox_state(None)
+        print(f"[dependency] Cleared expired sandbox state: {sandbox_id}")
+        
+        raise HTTPException(status_code=404, detail="Sandbox expired. Create a new one via POST /api/create-ai-sandbox.")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🚀 Backend starting...")
@@ -257,24 +254,17 @@ async def api_scrape_url_enhanced(request: Request, sandbox: Any = Depends(get_a
     return CustomJSONResponse(result)
 
 # --- Code Generation and Application ---
-# In main.py
-
 @app.post("/api/generate-ai-code-stream")
-async def api_generate_ai_code_stream(request: Request, sandbox: Any = Depends(get_active_sandbox)): # Add the sandbox dependency
+async def api_generate_ai_code_stream(request: Request):
     mod = MODULES.get("generate_ai_stream")
     if not mod: return create_error_response("Generator module not loaded")
-    
-    # This line ensures the module has the current sandbox object for this specific request
-    mod.active_sandbox = sandbox
-    
     body = await request.json()
     async def stream_generator():
         stream = mod.stream_generate_code(
             prompt=body.get("prompt", ""),
-            model=body.get("model", "openai/gpt-4o-mini"), # Or your preferred default
+            model=body.get("model", "openai/gpt-4o-mini"),
             context=body.get("context", {}),
-            is_edit=body.get("isEdit", False),
-            sandbox=sandbox  # Pass the live sandbox object into the stream function
+            is_edit=body.get("isEdit", False)
         )
         async for chunk in stream:
             yield f"data: {json.dumps(chunk)}\n\n"

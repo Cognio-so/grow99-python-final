@@ -7,58 +7,36 @@ active_sandbox: Optional[Any] = None
 sandbox_data: Optional[Any] = None
 existing_files: Set[str] = set()
 import inspect
+from routes.database import get_sandbox_state
 async def POST() -> Dict[str, Any]:
     """Kill active sandbox - equivalent to POST function from TypeScript"""
-    global active_sandbox, sandbox_data, existing_files
-    
     try:
         print('[kill-sandbox] Killing active sandbox...')
         
-        sandbox_killed = False
-        
-        # Kill existing sandbox if any
-        if active_sandbox is not None:
-            try:
-                if hasattr(active_sandbox, 'close'):
-                    if inspect.iscoroutinefunction(active_sandbox.close):
-                        await active_sandbox.close()
-                    else:
-                        active_sandbox.close()
-                sandbox_killed = True
-                print('[kill-sandbox] Sandbox closed successfully')
-            except Exception as e:
-                print(f'[kill-sandbox] Failed to close sandbox: {e}')
+        # Kill existing sandbox if any (check database for active sandbox state)
+        state = get_sandbox_state()
+        if state and state.get("sandboxId"):
+            # Use your sandbox SDK to close the active sandbox
+            sandbox_id = state["sandboxId"]
+            print(f"[kill-sandbox] Killing sandbox with ID: {sandbox_id}")
+            # Example of sandbox cleanup logic:
+            if sandbox_id:
+                sandbox = E2BSandbox.connect(sandbox_id, api_key=os.getenv("E2B_API_KEY"))
+                sandbox.close()  # Close the sandbox connection
 
-            
-        # Clear all global state variables
-        active_sandbox = None
-        sandbox_data = None
-        existing_files.clear()
-        
-        # --- SAVE THE CLEARED STATE ---
-        # main_app = sys.modules.get("main")
-        # if main_app and hasattr(main_app, "MODULES"):
-        #     save_state(main_app.MODULES)
-        # # ----------------------------
-        try:
-            # Clear the persistent state file
-            import os
-            state_files = ['/tmp/g99_sandbox.json', '/tmp/g99_conversation_state.json']
-            for state_file in state_files:
-                if os.path.exists(state_file):
-                    os.remove(state_file)
-                    print(f"[kill-sandbox] Cleared {state_file}")
-        except Exception as e:
-            print(f"[kill-sandbox] Failed to clear state files: {e}")
-        return {
-            "success": True,
-            "sandboxKilled": sandbox_killed,
-            "message": "Sandbox cleaned up successfully"
-        }
-        
+        # Clear all global state variables in the database (not in memory)
+        set_sandbox_state(None)
+
+        # Clean up session files
+        import os
+        state_files = ['/tmp/g99_sandbox.json', '/tmp/g99_conversation_state.json']
+        for state_file in state_files:
+            if os.path.exists(state_file):
+                os.remove(state_file)
+                print(f"[kill-sandbox] Cleared {state_file}")
+
+        return {"success": True, "sandboxKilled": True, "message": "Sandbox cleaned up successfully"}
+
     except Exception as error:
         print(f'[kill-sandbox] Error: {error}')
-        return {
-            "success": False,
-            "error": str(error)
-        }
+        return {"success": False, "error": str(error)}

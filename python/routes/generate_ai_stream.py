@@ -24,12 +24,17 @@ from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
-
+# Corrected version
+from routes.database import get_sandbox_state, set_sandbox_state
 # -------------------------------------------------------------------
 # Shared globals (will be filled by main_app sync after sandbox)
 # -------------------------------------------------------------------
-sandbox_state: Optional[Dict[str, Any]] = None
-conversation_state: Optional["ConversationState"] = None
+# sandbox_state: Optional[Dict[str, Any]] = None
+# conversation_state: Optional["ConversationState"] = None
+active_sandbox: Optional[Any] = None
+# We manage conversation state as a simple dictionary
+conversation_state: Dict[str, Any] = {"context": {"messages": [], "edits": []}}
+
 
 import csv
 import random
@@ -114,15 +119,18 @@ def is_redesign_request(prompt):
     
     return is_redesign
 
-async def clear_cache_and_files():
-    """COMPREHENSIVE file cleanup - delete ALL src files, not just cached ones"""
+async def clear_cache_and_files(sandbox: Any):
+    """
+    COMPREHENSIVE file cleanup - delete ALL src files, not just cached ones
+    """
     print("[schema] COMPREHENSIVE file cleanup for redesign...")
     
-    global sandbox_state, active_sandbox
-    
-    if active_sandbox:
-        # Delete ALL files in src directory, not just cached ones
-        comprehensive_delete_code = f"""
+    if not sandbox:
+        print("[schema] ERROR: No active sandbox provided for cleanup. Aborting.")
+        return
+
+    # Delete ALL files in src directory
+    comprehensive_delete_code = f"""
 import os
 import shutil
 
@@ -153,34 +161,34 @@ for file_path in root_files:
 
 print("COMPREHENSIVE_DELETION_COMPLETE")
 """
-        
-        try:
-            from routes.apply_ai_code_stream import _run_in_sandbox
-            result = await _run_in_sandbox(active_sandbox, comprehensive_delete_code)
-            
-            if hasattr(result, 'logs') and hasattr(result.logs, 'stdout'):
-                output = ''.join(result.logs.stdout) if isinstance(result.logs.stdout, list) else str(result.logs.stdout or "")
-            else:
-                output = str(result)
-            
-            print(f"[schema] Comprehensive deletion result: {output}")
-                
-        except Exception as e:
-            print(f"[schema] ERROR in comprehensive deletion: {e}")
     
-    # Clear the file cache completely
-    if sandbox_state and isinstance(sandbox_state, dict):
-        try:
-            cache = sandbox_state.get("fileCache", {})
-            if isinstance(cache, dict):
-                cache.clear()  # Clear everything
-                cache["files"] = {}
-                cache["manifest"] = {}
-                cache["lastSync"] = int(time.time() * 1000)
-                
-                print("[schema] File cache completely cleared")
-        except Exception as e:
-            print(f"[schema] ERROR clearing cache: {e}")
+    try:
+        from routes.apply_ai_code_stream import _run_in_sandbox
+        result = await _run_in_sandbox(sandbox, comprehensive_delete_code)
+        
+        if hasattr(result, 'logs') and hasattr(result.logs, 'stdout'):
+            output = ''.join(result.logs.stdout) if isinstance(result.logs.stdout, list) else str(result.logs.stdout or "")
+        else:
+            output = str(result)
+        
+        print(f"[schema] Comprehensive deletion result: {output}")
+            
+    except Exception as e:
+        print(f"[schema] ERROR in comprehensive deletion: {e}")
+
+    # Clear the file cache completely from the database
+    try:
+        current_state = get_sandbox_state()
+        if current_state:
+            current_state["fileCache"] = {
+                "files": {},
+                "manifest": {},
+                "lastSync": int(time.time() * 1000)
+            }
+            set_sandbox_state(current_state)
+            print("[schema] File cache in database cleared successfully.")
+    except Exception as e:
+        print(f"[schema] ERROR clearing cache in database: {e}")
 
 # Update the sync version for non-async contexts
 def clear_cache():
@@ -239,8 +247,10 @@ def sanitize_content_for_utf8(content: str) -> str:
 
 # Enhanced file cache access
 def _file_cache() -> Dict[str, Any]:
-    if isinstance(sandbox_state, dict):
-        fc = sandbox_state.get("fileCache") or {}
+    """Fetches the latest file cache directly from the database."""
+    state = get_sandbox_state()
+    if state:
+        fc = state.get("fileCache") or {}
         return fc if isinstance(fc, dict) else {}
     return {}
 
@@ -399,67 +409,34 @@ def send_progress(callbacks, data):
 
 
 def analyze_intent_node(state: AgentState) -> AgentState:
-    """Enhanced intent analysis with redesign detection and logging"""
+    """FIXED: Reliably detects redesign and flags for cleanup."""
     prompt = state["prompt"]
-    is_edit = state["is_edit"]
+    print("[analyze_intent] Starting intent analysis...")
     
-    print(f"[analyze_intent] Starting intent analysis...")
-    print(f"[analyze_intent] Input prompt: '{prompt[:100]}...'")
-    print(f"[analyze_intent] Initial is_edit flag: {is_edit}")
-    
-    # FIXED: Handle redesign requests with synchronous cleanup
     if is_redesign_request(prompt):
-        print("[analyze_intent] Redesign request detected - clearing cache and marking for file cleanup")
-        
-        # Use synchronous cache clearing only
-        clear_cache()
-        is_edit = False
+        print("[analyze_intent] ✅ Redesign request detected. Flagging for full cleanup.")
         state["is_edit"] = False
-        state["needs_file_cleanup"] = True  # Flag for async cleanup later
-        print("[analyze_intent] Converted redesign to new design (is_edit = False)")
+        state["needs_file_cleanup"] = True
     else:
-        print("[analyze_intent] No redesign detected - proceeding with original is_edit flag")
         state["needs_file_cleanup"] = False
-    
-    # Rest of the function remains the same...
+
     edit_context = None
-    manifest = _manifest()
-    
-    print(f"[analyze_intent] Manifest available: {manifest is not None}")
-    
-    if is_edit and manifest:
-        print("[analyze_intent] Edit mode with manifest - using analyze_edit_intent module")
-        try:
-            import sys
-            main_app = sys.modules.get("main")
-            if main_app and hasattr(main_app, "MODULES"):
+    if state["is_edit"]:
+        manifest = _manifest()
+        if manifest:
+            try:
+                import sys
+                main_app = sys.modules.get("main")
                 analyze_module = main_app.MODULES.get("analyze_edit_intent")
-                if analyze_module:
-                    print("[analyze_intent] Found analyze_edit_intent module, calling POST")
-                    result = analyze_module.POST({
-                        'prompt': prompt,
-                        'manifest': manifest
-                    })
-                    if result.get('success'):
-                        edit_context = result.get('editContext')
-                        print(f"[analyze_intent] Successfully got edit context from module")
-                    else:
-                        print(f"[analyze_intent] Module returned failure: {result.get('error', 'Unknown error')}")
-                else:
-                    print("[analyze_intent] analyze_edit_intent module not found in MODULES")
-            else:
-                print("[analyze_intent] main_app or MODULES not available")
-        except Exception as e:
-            print(f"[analyze_intent] ERROR using analysis module: {e}")
-    else:
-        if not is_edit:
-            print("[analyze_intent] New design mode - will use schema")
-        else:
-            print("[analyze_intent] Edit mode but no manifest available")
-    
+                result = analyze_module.POST({'prompt': prompt, 'manifest': manifest})
+                if result.get('success'):
+                    edit_context = result.get('editContext')
+            except Exception as e:
+                print(f"[analyze_intent] ERROR using analysis module: {e}")
+            
     state["edit_context"] = edit_context
-    print(f"[analyze_intent] Final edit_context set: {edit_context is not None}")
     return state
+
 # -------------------------------------------------------------------
 # EXACT TS SYSTEM PROMPT IMPLEMENTATION
 # -------------------------------------------------------------------
@@ -960,8 +937,15 @@ REMEMBER: It's better to generate fewer COMPLETE files than many INCOMPLETE file
 
 # Enhanced build_prompts_node function for generate_ai_stream.py
 
+# In routes/generate_ai_stream.py
+# Replace the entire existing build_prompts_node function with this one.
+
+# In routes/generate_ai_stream.py
+
 def build_prompts_node(state: AgentState) -> AgentState:
-    """Enhanced prompt building with comprehensive file context for edits"""
+    """
+    FIXED: Handles different data types for scraped content to prevent KeyError.
+    """
     global conversation_state
 
     prompt = state["prompt"]
@@ -970,163 +954,65 @@ def build_prompts_node(state: AgentState) -> AgentState:
     edit_context = state.get("edit_context")
 
     print(f'[build_prompts_node] 🚀 Building prompts - is_edit: {is_edit}')
-    print(f'[build_prompts_node] 📄 Edit context available: {edit_context is not None}')
 
-    # Build conversation context
+    # --- Step 1: Build Conversation Context ---
     conversation_context = ""
-    if conversation_state and len(conversation_state.context["messages"]) > 1:
-        conversation_context = "\n\n## Conversation History\n"
-        recent_edits = conversation_state.context["edits"][-3:]
-        if recent_edits:
-            conversation_context += "\n### Recent Edits:\n"
-            for edit in recent_edits:
-                target_files = [f.split("/")[-1] for f in edit["target_files"]]
-                conversation_context += f'- "{edit["user_request"]}" → {edit["edit_type"]} ({", ".join(target_files)})\n'
+    if conversation_state and len(conversation_state["context"]["messages"]) > 1:
+        history = [f'{m["role"]}: {m["content"]}' for m in conversation_state["context"]["messages"][-5:]]
+        conversation_context = "\n\n## Recent Conversation History\n" + "\n".join(history)
 
-    # Get files map for context
-    files_map = _files_map()
-    print(f'[build_prompts_node] 📊 Available files in cache: {len(files_map)}')
+    # --- Step 2: Build the System Prompt ---
+    print(f'[build_prompts_node] 🧠 Generating comprehensive system prompt. Edit context available: {edit_context is not None}')
+    system_prompt = build_comprehensive_system_prompt(conversation_context, is_edit, edit_context)
+
+    # --- Step 3: Build the Full User-Facing Prompt ---
+    full_prompt_parts = []
+    full_prompt_parts.append("CONTEXT:")
+
+    # --- THIS BLOCK IS NOW FIXED ---
+    if not is_edit and context.get("conversationContext") and context["conversationContext"].get("scrapedWebsites"):
+        site_data = context["conversationContext"]["scrapedWebsites"][-1]
+        
+        # Add a check to ensure site_data is a dictionary
+        if isinstance(site_data, dict):
+            full_prompt_parts.append("\n## Scraped Website Data\n")
+            full_prompt_parts.append(f"URL: {site_data.get('url', 'N/A')}\n")
+            
+            # Add another check for the 'content' key
+            content = site_data.get("content", "")
+            if isinstance(content, str):
+                content_preview = content[:3000]
+                full_prompt_parts.append(f"CONTENT PREVIEW:\n---\n{content_preview}\n---\n")
+            else:
+                 # Handle cases where content might be a dict itself from scrape_url_enhanced
+                 content_str = str(content)
+                 content_preview = content_str[:3000]
+                 full_prompt_parts.append(f"CONTENT PREVIEW:\n---\n{content_preview}\n---\n")
     
-    # BUILD SYSTEM PROMPT - CRITICAL FOR CONTENT PRESERVATION
-    if is_edit and edit_context:
-        print('[build_prompts_node] 🎯 Using enhanced edit mode prompt with content preservation')
-        
-        # Create enhanced edit system prompt
+    # Logic for edit mode remains the same
+    files_map = _files_map()
+    if is_edit and edit_context and files_map:
         primary_files = edit_context.get("primaryFiles", [])
-        # Add critical XML format enforcement for edits
-        # primary_files = edit_context.get("primaryFiles", [])
-        system_prompt = f"""
+        if primary_files:
+            print(f'[build_prompts_node] Found {len(primary_files)} files to include for editing.')
+            full_prompt_parts.append("\n## Existing File Content (Modify this code)\n")
+            for file_path in primary_files:
+                file_info = files_map.get(file_path)
+                if file_info and file_info.get("content"):
+                    content = file_info["content"]
+                    relative_path = file_info.get("relativePath", file_path)
+                    full_prompt_parts.append(f'<existing_file path="{relative_path}">\n{content}\n</existing_file>\n')
+                    print(f'[build_prompts_node] ✅ Injected content for {relative_path} ({len(content)} chars)')
+                else:
+                    print(f'[build_prompts_node] ⚠️ WARNING: No content found in cache for {file_path}')
+            full_prompt_parts.append("\n---\n")
+        else:
+             print('[build_prompts_node] ⚠️ WARNING: Edit mode active, but no primary files were identified.')
 
-🚨 CRITICAL XML FORMAT REQUIREMENT FOR EDITS:
+    # Finally, add the user's actual request
+    full_prompt_parts.append(f"## User Request\n{prompt}")
 
-You MUST generate exactly {len(primary_files)} files using this EXACT XML format:
-
-<file path="src/App.jsx">
-[complete App.jsx content with gradient theme]
-</file>
-
-<file path="src/components/Header.jsx">
-[complete Header.jsx content with gradient theme]
-</file>
-
-<file path="src/components/Hero.jsx">
-[complete Hero.jsx content with gradient theme]
-</file>
-
-DO NOT use any other format. DO NOT generate a single large component.
-Generate {len(primary_files)} separate <file> blocks, one for each file listed above.
-
-VIOLATION OF THIS FORMAT WILL RESULT IN FAILURE.
-"""
-        preserve_existing = edit_context.get("preserveExisting", True)
-        user_request = edit_context.get("userRequest", prompt)
-        
-        system_prompt += f"""🚨 CRITICAL EDIT MODE - PRESERVE ALL EXISTING CONTENT
-
-You are editing an existing React application. You MUST preserve all existing content, text, and functionality.
-
-USER REQUEST: "{user_request}"
-
-🔧 EDIT RULES - VIOLATION = COMPLETE FAILURE:
-1. **PRESERVE ALL EXISTING TEXT CONTENT** - Do not change any text, headings, descriptions, or copy
-2. **PRESERVE ALL EXISTING FUNCTIONALITY** - Keep all existing components, imports, and logic
-3. **PRESERVE COMPONENT STRUCTURE** - Do not reorganize or rename existing components
-4. **ONLY MAKE THE REQUESTED CHANGE** - For "change theme to gradient", only update styling/colors
-
-📋 FILES TO EDIT: {len(primary_files)} files
-{chr(10).join(f'- {f.split("/")[-1]}' for f in primary_files)}
-
-🎨 FOR STYLING/THEME CHANGES:
-- Update Tailwind CSS classes for colors, backgrounds, gradients
-- Add smooth transitions and modern effects
-- Enhance visual design while keeping all text exactly the same
-- Use gradient backgrounds like: bg-gradient-to-r from-blue-600 to-purple-600
-
-❌ FORBIDDEN ACTIONS:
-- Changing any text content or copy
-- Adding placeholder text like "Welcome to our website"
-- Removing existing sections or components
-- Changing the website's purpose or message
-- Creating entirely new content
-
-✅ ALLOWED ACTIONS:
-- Updating CSS classes for styling
-- Adding gradient backgrounds
-- Improving visual design
-- Enhancing color schemes
-- Adding hover effects and transitions
-
-{conversation_context}
-
-CRITICAL: You will be provided with the EXACT existing file content below. You must preserve this content and only make the styling changes requested."""
-
-    else:
-        print('[build_prompts_node] 📝 Using standard prompt')
-        system_prompt = build_comprehensive_system_prompt(conversation_context, is_edit, edit_context)
-
-    # BUILD FULL PROMPT WITH EXISTING FILE CONTENT
-    full_prompt = prompt
-
-    if context:
-        parts = []
-
-        if context.get("sandboxId"):
-            parts.append(f"Sandbox ID: {context['sandboxId']}")
-
-        # 🚨 CRITICAL: Include existing file content for edit mode
-        if is_edit and edit_context and files_map:
-            print(f'[build_prompts_node] 📁 Including existing file content for {len(edit_context.get("primaryFiles", []))} files')
-            
-            primary_files = edit_context.get("primaryFiles", [])
-            existing_content = edit_context.get("existingContent", {})
-            
-            if primary_files:
-                parts.append("\n🚨 EXISTING FILES - PRESERVE ALL CONTENT:")
-                
-                for file_path in primary_files:
-                    file_name = file_path.split("/")[-1]
-                    relative_path = file_path.replace("/home/user/app/", "")
-                    
-                    # Get content from edit context or files_map
-                    content = existing_content.get(file_path) or files_map.get(file_path, {}).get("content", "")
-                    
-                    if content:
-                        parts.append(f'\n<existing_file path="{relative_path}" name="{file_name}">')
-                        parts.append(f'CURRENT CONTENT ({len(content)} chars) - PRESERVE ALL TEXT:')
-                        parts.append('```jsx')
-                        parts.append(content)
-                        parts.append('```')
-                        parts.append('</existing_file>')
-                        
-                        print(f'[build_prompts_node] ✅ Included existing content: {file_name} ({len(content)} chars)')
-                    else:
-                        print(f'[build_prompts_node] ⚠️ No content found for: {file_name}')
-
-                # Add critical preservation instructions
-                parts.append(f'\n🎯 EDIT INSTRUCTIONS:')
-                parts.append(f'- Request: "{prompt}"')
-                parts.append(f'- Preserve: ALL existing text content and functionality')
-                parts.append(f'- Change: ONLY the styling/theme as requested')
-                parts.append(f'- Output: Complete files with preserved content + requested changes')
-
-        # Include scraped website data for initial generation only
-        elif not is_edit and context.get("conversationContext") and context["conversationContext"].get("scrapedWebsites"):
-            parts.append("\n🌐 SCRAPED WEBSITE DATA:")
-            for site in context["conversationContext"]["scrapedWebsites"]:
-                parts.append(f"\nURL: {site.get('url', 'N/A')}")
-                
-                structured_data = site.get("structured", {})
-                
-                if structured_data.get("analysis"):
-                    analysis = structured_data["analysis"]
-                    parts.append(f"\n📊 ANALYSIS: {len(analysis.get('required_components', []))} components required")
-                
-                content_preview_text = structured_data.get("content", "")
-                if content_preview_text:
-                    parts.append(f"\n📄 CONTENT:\n{content_preview_text[:2000]}")
-
-        if parts:
-            full_prompt = f"CONTEXT:\n{chr(10).join(parts)}\n\n🎯 USER REQUEST:\n{prompt}"
+    full_prompt = "\n".join(full_prompt_parts)
 
     state["system_prompt"] = system_prompt
     state["full_prompt"] = full_prompt
@@ -1134,17 +1020,9 @@ CRITICAL: You will be provided with the EXACT existing file content below. You m
     print(f'[build_prompts_node] 📏 System prompt length: {len(system_prompt)}')
     print(f'[build_prompts_node] 📏 Full prompt length: {len(full_prompt)}')
 
-    send_progress(state["progress_callbacks"], {"type": "status", "message": "🧠 Building enhanced generation prompts with file context..."})
-    
-    if is_edit and edit_context:
-        primary_files_count = len(edit_context.get('primaryFiles', []))
-        send_progress(state["progress_callbacks"], {
-            "type": "status", 
-            "message": f"🔧 Edit mode: targeting {primary_files_count} files with existing content preserved"
-        })
+    send_progress(state["progress_callbacks"], {"type": "status", "message": "🧠 Building prompts with full context..."})
     
     return state
-
 
 def build_enhanced_edit_prompt(edit_context: Dict, conversation_context: str = "") -> str:
     """Build comprehensive edit prompt that preserves existing content"""
@@ -1662,84 +1540,81 @@ async def stream_generate_code(
     prompt: str,
     model: str = "openai/gpt-5",
     context: Optional[Dict] = None,
-    is_edit: bool = False
+    is_edit: bool = False,
+    sandbox: Any = None  # It now receives the live sandbox
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     An async generator that yields progress events for code generation.
+    FIXED: Now handles physical file cleanup on redesign requests.
     """
     global conversation_state
 
-    if context is None:
-        context = {}
-    if conversation_state is None:
-        conversation_state = ConversationState()
+    if context is None: context = {}
+    if conversation_state is None: conversation_state = {"context": {"messages": [], "edits": []}}
 
-    # Add message to conversation
-    conversation_state.context["messages"].append({
-        "id": f"msg-{int(time.time())}",
-        "role": "user",
-        "content": prompt,
-        "timestamp": int(time.time()),
+    conversation_state["context"]["messages"].append({
+        "id": f"msg-{int(time.time())}", "role": "user", "content": prompt, "timestamp": int(time.time()),
     })
 
-    # Queue for progress callbacks
     progress_queue: asyncio.Queue = asyncio.Queue()
-
     def progress_callback(data):
         progress_queue.put_nowait(data)
 
     initial_state = AgentState(
-        prompt=prompt,
-        model=model,
-        context=context,
-        is_edit=is_edit,
-        conversation_history=conversation_state.context["messages"],
-        progress_callbacks=[progress_callback],
-        generated_code="",
-        files=[],
-        explanation="",
-        packages_to_install=[],
-        components_count=0,
-        warnings=[],
-        edit_context=None,
-        system_prompt="",
-        full_prompt=""
+        prompt=prompt, model=model, context=context, is_edit=is_edit,
+        conversation_history=conversation_state["context"]["messages"],
+        progress_callbacks=[progress_callback], generated_code="", files=[],
+        explanation="", packages_to_install=[], components_count=0,
+        warnings=[], edit_context=None, system_prompt="", full_prompt=""
     )
 
-    # Build the graph
     graph = StateGraph(AgentState)
-
-    def entry_condition(s: AgentState) -> str:
-        return "analyze_intent" if (s["is_edit"] and _manifest()) else "build_prompts"
-
     graph.add_node("analyze_intent", analyze_intent_node)
     graph.add_node("build_prompts", build_prompts_node)
     graph.add_node("generate_code", code_generation_node)
-    graph.add_conditional_edges(START, entry_condition, {
-        "analyze_intent": "analyze_intent",
-        "build_prompts": "build_prompts"
-    })
     graph.add_edge("analyze_intent", "build_prompts")
     graph.add_edge("build_prompts", "generate_code")
     graph.add_edge("generate_code", END)
-
+    graph.set_entry_point("analyze_intent")
     agent = graph.compile()
 
-    # Run the graph in a background task
+    final_state = None
+    agent_task = None
+
     async def run_agent():
+        nonlocal final_state
         try:
-            await agent.ainvoke(initial_state)
+            async for s in agent.astream(initial_state):
+                if END in s:
+                    final_state = s[END]
         finally:
-            # Signal completion
             await progress_queue.put(None)
 
     agent_task = asyncio.create_task(run_agent())
+    try:
+        while True:
+            chunk = await progress_queue.get()
+            if chunk is None: break
+            yield chunk
+        await agent_task
+    finally:
+        # This block now has the live sandbox object and will execute correctly
+        if final_state and final_state.get("needs_file_cleanup"):
+            print("[stream_generate_code] Performing final cleanup for redesign...")
+            yield {"type": "status", "message": "🧹 Clearing old project files..."}
+            try:
+                await clear_cache_and_files(sandbox) # Pass the live object!
+                print("[stream_generate_code] ✅ Cleanup successful.")
+                yield {"type": "success", "message": "Old files cleared."}
+            except Exception as e:
+                print(f"[stream_generate_code] ❌ Cleanup error: {e}")
+                yield {"type": "error", "message": f"Failed to clear old files: {e}"}
 
-    # Yield progress from the queue
-    while True:
-        chunk = await progress_queue.get()
-        if chunk is None:
-            break
-        yield chunk
 
-    await agent_task  # Ensure the agent task completes
+
+
+
+
+
+
+

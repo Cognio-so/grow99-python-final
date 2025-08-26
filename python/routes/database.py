@@ -10,7 +10,8 @@ import threading
 _local = threading.local()
 
 # Database path - use persistent storage
-DB_PATH = Path('/app/data') / 'sandbox_state.db'
+DATA_DIR = Path(os.getenv("DATA_STORAGE_PATH", "/app/data"))
+DB_PATH = DATA_DIR / 'sandbox_state.db'
 
 def init_database():
     """Initialize the database with required tables"""

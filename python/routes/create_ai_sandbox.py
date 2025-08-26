@@ -38,8 +38,8 @@ try:
 except Exception:
     appConfig = SimpleNamespace(
         e2b=SimpleNamespace(
-            timeoutMinutes=15,
-            timeoutMs=15 * 60 * 1000,
+            timeoutMinutes=45,
+            timeoutMs=45 * 60 * 1000,
             vitePort=5173,
             viteStartupDelay=8000,
         )
@@ -267,6 +267,7 @@ async def _get_sandbox_id_compat(sandbox):
 async def POST() -> Dict[str, Any]:
     """Creates a new E2B sandbox, sets up a Vite+React+Tailwind environment,
     and saves its state to a centralized file for other processes to use."""
+    
     sandbox: Optional[Any] = None
 
     try:
@@ -275,52 +276,54 @@ async def POST() -> Dict[str, Any]:
         set_sandbox_state(None)
 
         print("[create-ai-sandbox] Creating new E2B sandbox...")
+
+        # Check if E2B Sandbox SDK is available
         if E2BSandbox is None:
             raise RuntimeError("E2B Sandbox library is not available or failed to import.")
 
         api_key = os.getenv("E2B_API_KEY")
-
-        # Check SDK version and handle api_key differently
+        
+        # Check SDK version and handle api_key differently for async vs sync
         if hasattr(E2BSandbox, "create"):
             create_fn = getattr(E2BSandbox, "create", None)
 
             if create_fn and inspect.iscoroutinefunction(create_fn):
-                # If `create` is async
+                # If `create` is async, await its execution
                 sandbox = await create_fn(api_key=api_key)
             elif create_fn:
-                # If `create` is sync
+                # If `create` is sync, execute normally
                 sandbox = create_fn(api_key=api_key)
             else:
-                # Fallback: legacy SDK initialization
+                # Fallback for legacy SDKs
                 sandbox = E2BSandbox()
         else:
-            # Fallback to direct instantiation (legacy)
+            # Legacy fallback: Use direct instantiation of sandbox
             sandbox = E2BSandbox(api_key=api_key)
 
-        # Get the sandbox ID
+        # Step 2: Get the sandbox ID after creation
         sandbox_id = await _get_sandbox_id_compat(sandbox)
         print(f"[create-ai-sandbox] Sandbox created with ID: {sandbox_id}")
 
-        # Step 2: Set up the Vite environment inside the sandbox.
+        # Step 3: Set up the Vite environment inside the sandbox
         vite_started = await ensure_vite_server(sandbox, sandbox_id)
 
-        # Step 3: Get the correct, accessible URL for the sandbox.
+        # Step 4: Get the correct, accessible URL for the sandbox
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
 
-        # Step 4: Create the state dictionary to save centrally.
+        # Step 5: Create the state dictionary to save centrally
         new_state = {
             "sandboxId": sandbox_id,
             "url": sandbox_url,
             "createdAt": int(time.time() * 1000)
         }
 
-        # Step 5: Save the new state to the central file using our manager.
+        # Step 6: Save the new state to the central file using our manager
         set_sandbox_state(new_state)
 
         print("[create-ai-sandbox] ✅ SUCCESS: Sandbox created and state saved centrally!")
         print(f"[create-ai-sandbox] URL: {sandbox_url}")
 
-        # Step 6: Close the temporary connection. Future requests will reconnect using the ID.
+        # Step 7: Close the temporary connection. Future requests will reconnect using the ID.
         if hasattr(sandbox, "close"):
             if inspect.iscoroutinefunction(sandbox.close):
                 await sandbox.close()
@@ -338,16 +341,21 @@ async def POST() -> Dict[str, Any]:
 
     except Exception as error:
         print(f"[create-ai-sandbox] CRITICAL ERROR: {error}")
+
         # Ensure state is cleared on failure to prevent using a broken sandbox
         set_sandbox_state(None)
 
+        # Kill the expired sandbox if any, and clean up
         if sandbox and hasattr(sandbox, "close"):
             try:
-                if inspect.iscoroutinefunction(sandbox.close): await sandbox.close()
-                else: sandbox.close()
+                if inspect.iscoroutinefunction(sandbox.close):
+                    await sandbox.close()
+                else:
+                    sandbox.close()
             except Exception as e:
                 print(f"Failed to close sandbox during error handling: {e}")
 
+        # Provide full traceback in the error response
         import traceback
         return {
             "error": str(error),

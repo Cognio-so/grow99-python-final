@@ -368,27 +368,40 @@ useEffect(() => {
       if (contentType.includes('text/event-stream') && response.body) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-
+         let buffer = ''; 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+            
+          buffer += decoder.decode(value, { stream: true });
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+        // Process all complete messages in the buffer
+        const lines = buffer.split('\n');
+        
+        // The last line might be incomplete, so we keep it in the buffer
+        buffer = lines.pop() || '';
 
           for (const line of lines) {
             if (line.startsWith('data: ')) {
               try {
-                const data = JSON.parse(line.slice(6));
+                const jsonString = line.slice(6);
+                    const data = JSON.parse(jsonString);
 
                 if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
                 } else if (data.type === 'thinking') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: true,
-                    thinkingText: (prev.thinkingText || '') + data.text
-                  }));
+                  setGenerationProgress(prev => {
+                            // ... existing logic to update streamedCode and parse files
+                            const newStreamedCode = prev.streamedCode + data.text;
+                            // ... rest of your logic
+                            return {
+                                ...prev,
+                                streamedCode: newStreamedCode,
+                                isStreaming: true,
+                                isThinking: false,
+                                status: 'Generating code...'
+                            };
+                        });
                 } else if (data.type === 'thinking_complete') {
                   setGenerationProgress(prev => ({ 
                     ...prev, 
@@ -2929,6 +2942,104 @@ Create a complete, modern React application based on this input. Use your expert
     }
   }, 500);
 };
+
+  // Add this utility function for safe JSON parsing
+  const safeJsonParse = (str: string) => {
+    // First try parsing as complete JSON
+    try {
+      return JSON.parse(str);
+    } catch (e) {
+      // If that fails, try to find complete JSON objects within the string
+      const jsonObjects = [];
+      let start = str.indexOf('{');
+      let end = str.lastIndexOf('}') + 1;
+      
+      while (start >= 0 && end > start) {
+        try {
+          const potentialJson = str.slice(start, end);
+          const parsed = JSON.parse(potentialJson);
+          jsonObjects.push(parsed);
+          str = str.slice(end); // Remove parsed portion
+          start = str.indexOf('{');
+          end = str.lastIndexOf('}') + 1;
+        } catch (innerError) {
+          // Move start forward to try next potential JSON
+          start = str.indexOf('{', start + 1);
+        }
+      }
+      
+      return jsonObjects.length > 0 ? jsonObjects : null;
+    }
+  };
+
+  // Enhanced SSE handler with proper buffering and error recovery
+  const handleSSE = (eventSource: EventSource) => {
+    let buffer = '';
+    let isProcessing = false;
+    
+    eventSource.onmessage = (event) => {
+      if (isProcessing) return; // Skip if already processing
+      
+      isProcessing = true;
+      try {
+        buffer += event.data;
+        
+        // Process all complete JSON objects in buffer
+        while (buffer.includes('{') && buffer.includes('}')) {
+          const start = buffer.indexOf('{');
+          const end = buffer.indexOf('}', start) + 1;
+          
+          if (end <= start) break; // Invalid positions
+          
+          const chunk = buffer.slice(start, end);
+          const result = safeJsonParse(chunk);
+          
+          if (result) {
+            // Process the valid JSON data
+            if (Array.isArray(result)) {
+              result.forEach(handleValidMessage);
+            } else {
+              handleValidMessage(result);
+            }
+            buffer = buffer.slice(end); // Remove processed chunk
+          } else {
+            // If parsing failed, skip this chunk
+            buffer = buffer.slice(end);
+          }
+        }
+      } catch (error) {
+        console.error('SSE processing error:', error);
+        buffer = ''; // Reset buffer on critical error
+      } finally {
+        isProcessing = false;
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      // Implement reconnection with exponential backoff
+      setTimeout(() => {
+        const newEventSource = new EventSource(eventSource.url);
+        handleSSE(newEventSource);
+      }, 5000); // 5 second retry delay
+    };
+  };
+
+  // Helper function to process valid messages
+  const handleValidMessage = (message: any) => {
+    if (!message) return;
+    
+    // Add your message processing logic here
+    // Example:
+    if (message.type === 'progress') {
+      setGenerationProgress(prev => ({
+        ...prev,
+        status: message.text,
+        progress: message.value
+      }));
+    }
+    // ... other message types
+  };
 
   return (
     <div className="font-sans bg-background text-foreground h-screen flex flex-col">

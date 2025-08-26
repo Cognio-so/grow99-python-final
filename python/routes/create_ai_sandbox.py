@@ -355,3 +355,33 @@ async def POST() -> Dict[str, Any]:
             "success": False,
             "status": 500,
         }
+
+# Add these SSE-specific helpers to your backend:
+
+def format_sse_message(data: dict) -> str:
+    """Properly format JSON data for SSE"""
+    try:
+        json_str = json.dumps(data)
+        return f"data: {json_str}\n\n"
+    except Exception as e:
+        print(f"Error formatting SSE message: {e}")
+        return ""
+
+async def send_sse_update(
+    data: dict,
+    writer: asyncio.StreamWriter,
+    retries: int = 3
+) -> bool:
+    """Safely send SSE update with retries"""
+    for attempt in range(retries):
+        try:
+            message = format_sse_message(data)
+            writer.write(message.encode('utf-8'))
+            await writer.drain()
+            return True
+        except Exception as e:
+            print(f"SSE send error (attempt {attempt + 1}): {e}")
+            if attempt == retries - 1:
+                return False
+            await asyncio.sleep(0.1 * (attempt + 1))
+    return False

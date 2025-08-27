@@ -10,13 +10,13 @@ import os  # <-- Make sure os is imported
 # --- RENDER/LOCAL DYNAMIC PATH LOGIC ---
 # Render automatically sets the 'RENDER' environment variable to 'true'.
 # We can check for this to determine the environment.
-if os.getenv('RENDER') == 'true':
-    # We are on Render, so use the persistent disk path.
-    # Make sure this matches the Mount Path of your disk on Render.
-    storage_path = Path('/app/data')
-else:
+# if os.getenv('RENDER') == 'true':
+#     # We are on Render, so use the persistent disk path.
+#     # Make sure this matches the Mount Path of your disk on Render.
+#     storage_path = Path('/app/data')
+# else:
     # We are not on Render (running locally), so use a local folder.
-    storage_path = Path(__file__).resolve().parent.parent / 'local_data'
+storage_path = Path(__file__).resolve().parent.parent / 'local_data'
 
 # Define the final database path
 DB_PATH = storage_path / 'sandbox_state.db'

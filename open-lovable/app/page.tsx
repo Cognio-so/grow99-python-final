@@ -1122,12 +1122,13 @@ const forceRefreshPreview = async () => {
               // Method 2: Force reload after a short delay
               setTimeout(() => {
                 try {
-                  if (iframeRef.current?.contentWindow) {
+                  if (!iframeRef.current) return;
+                  const iframeUrl = new URL(iframeRef.current.src);
+                  if (iframeUrl.origin === window.location.origin && iframeRef.current.contentWindow) {
                     iframeRef.current.contentWindow.location.reload();
-                    console.log('[applyGeneratedCode] Force reloaded iframe content');
                   }
-                } catch (e) {
-                  console.log('[applyGeneratedCode] Could not reload iframe (cross-origin):', e);
+                } catch {
+                  // ignore cross-origin
                 }
               }, 1000);
             }
@@ -2988,6 +2989,19 @@ Create a complete, modern React application based on this input. Use your expert
     }
   }, 500);
 };
+
+  const canRefreshIframe = () =>
+    activeTab === 'preview' &&
+    !loading &&
+    !!iframeRef.current &&
+    !!sandboxData?.url;
+
+  useEffect(() => {
+    if (activeTab !== 'preview' || loading) return;
+    if (!iframeRef.current || !sandboxData?.url) return;
+
+    iframeRef.current.src = `${sandboxData.url}?t=${Date.now()}&view=preview`;
+  }, [activeTab, loading, sandboxData?.url, conversationContext.appliedCode.length]);
 
   return (
     <div className="font-sans bg-background text-foreground h-screen flex flex-col">

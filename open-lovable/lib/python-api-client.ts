@@ -12,12 +12,36 @@ const getApiUrl = (path: string) => {
 };
 
 // Enhanced error handling for API responses
-const handleApiError = async (response: Response, endpoint: string) => {
+// Enhanced error handling with auto-recreation
+const handleApiError = async (response: Response, endpoint: string, originalRequest?: () => Promise<Response>) => {
   console.error(`[PythonAPI] Error in ${endpoint}:`, response.status, response.statusText);
   
   try {
     const errorData = await response.json();
     console.error(`[PythonAPI] Error details:`, errorData);
+    
+    // AUTO-RECREATION LOGIC - Key addition
+    if (response.status === 404 && 
+        (errorData.detail?.includes?.('sandbox') || 
+         errorData.error?.includes?.('sandbox') ||
+         errorData.needsCreation)) {
+      
+      console.log('[PythonAPI] Sandbox expired, auto-creating new one...');
+      
+      try {
+        // Create new sandbox automatically
+        const sandboxResult = await createAiSandbox();
+        
+        if (sandboxResult.ok && originalRequest) {
+          console.log('[PythonAPI] Auto-recreation successful, retrying original request...');
+          // Retry the original request with new sandbox
+          return await originalRequest();
+        }
+      } catch (recreationError) {
+        console.error('[PythonAPI] Auto-recreation failed:', recreationError);
+      }
+    }
+    
     return {
       ok: false,
       error: errorData.error || errorData.detail || `HTTP ${response.status}`,
@@ -32,7 +56,6 @@ const handleApiError = async (response: Response, endpoint: string) => {
     };
   }
 };
-
 // Enhanced request wrapper with retry logic
 const makeRequest = async (url: string, options: RequestInit = {}, retries = 2): Promise<Response> => {
   const requestOptions: RequestInit = {
@@ -190,8 +213,8 @@ const generateAiCode = async (
     contextKeys: Object.keys(context || {})
   });
 
-  try {
-    const response = await makeRequest(getApiUrl('/api/generate-ai-code-stream'), {
+  const makeGenerateRequest = async () => {
+    return await makeRequest(getApiUrl('/api/generate-ai-code-stream'), {
       method: 'POST',
       body: JSON.stringify({ 
         prompt, 
@@ -200,9 +223,18 @@ const generateAiCode = async (
         isEdit: Boolean(isEdit)
       }),
     });
+  };
 
-    // For streaming endpoints, return the response directly
-    // The caller will handle streaming
+  try {
+    const response = await makeGenerateRequest();
+    
+    if (!response.ok && response.status === 404) {
+      const errorResult = await handleApiError(response, 'generateAiCode', makeGenerateRequest);
+      if (errorResult instanceof Response) {
+        return errorResult;
+      }
+    }
+    
     return response;
   } catch (error) {
     console.error('[PythonAPI] generateAiCode error:', error);
@@ -216,38 +248,37 @@ const applyAiCode = async (
   packages: string[],
   sandboxId: string | null | undefined
 ): Promise<Response> => {
-  console.log('[PythonAPI] Applying AI code...', {
-    codeLength: code.length,
-    isEdit,
-    packagesCount: packages?.length || 0,
-    sandboxId
-  });
+  console.log('[PythonAPI] Applying AI code...');
+
+  const makeApplyRequest = async () => {
+    return await makeRequest(getApiUrl('/api/apply-ai-code-stream'), {
+      method: 'POST',
+      body: JSON.stringify({
+        response: code,
+        isEdit: Boolean(isEdit),
+        packages: Array.isArray(packages) ? packages : [],
+        sandboxId: sandboxId || null
+      }),
+    });
+  };
 
   try {
-    const requestBody = {
-      response: code,
-      isEdit: Boolean(isEdit),
-      packages: Array.isArray(packages) ? packages : [],
-      sandboxId: sandboxId || null
-    };
-
-    console.log('[PythonAPI] Apply request body:', {
-      ...requestBody,
-      response: `${requestBody.response.slice(0, 100)}...`
-    });
-
-    const response = await makeRequest(getApiUrl('/api/apply-ai-code-stream'), {
-      method: 'POST',
-      body: JSON.stringify(requestBody),
-    });
-
+    const response = await makeApplyRequest();
+    
+    // Handle 404 errors with auto-recreation
+    if (!response.ok && response.status === 404) {
+      const errorResult = await handleApiError(response, 'applyAiCode', makeApplyRequest);
+      if (errorResult instanceof Response) {
+        return errorResult; // Successfully retried
+      }
+    }
+    
     return response;
   } catch (error) {
     console.error('[PythonAPI] applyAiCode error:', error);
     throw error;
   }
 };
-
 const installPackages = async (
   packages: string[],
   options?: { 
@@ -312,10 +343,21 @@ const updateConversationState = async (
 };
 
 const getSandboxFiles = async () => {
+  const makeFilesRequest = async () => {
+    return await makeRequest(getApiUrl('/api/get-sandbox-files'));
+  };
+
   try {
-    const response = await makeRequest(getApiUrl('/api/get-sandbox-files'));
+    const response = await makeFilesRequest();
 
     if (!response.ok) {
+      if (response.status === 404) {
+        const errorResult = await handleApiError(response, 'getSandboxFiles', makeFilesRequest);
+        if (errorResult instanceof Response) {
+          const data = await errorResult.json();
+          return { ok: true, ...data };
+        }
+      }
       return await handleApiError(response, 'getSandboxFiles');
     }
 
@@ -331,12 +373,23 @@ const getSandboxFiles = async () => {
 };
 
 const restartVite = async () => {
-  try {
-    const response = await makeRequest(getApiUrl('/api/restart-vite'), {
+  const makeRestartRequest = async () => {
+    return await makeRequest(getApiUrl('/api/restart-vite'), {
       method: 'POST',
     });
+  };
+
+  try {
+    const response = await makeRestartRequest();
 
     if (!response.ok) {
+      if (response.status === 404) {
+        const errorResult = await handleApiError(response, 'restartVite', makeRestartRequest);
+        if (errorResult instanceof Response) {
+          const data = await errorResult.json();
+          return { ok: true, ...data };
+        }
+      }
       return await handleApiError(response, 'restartVite');
     }
 
@@ -373,13 +426,24 @@ const createZip = async () => {
 };
 
 const scrapeScreenshot = async (url: string) => {
-  try {
-    const response = await makeRequest(getApiUrl('/api/scrape-screenshot'), {
+  const makeScreenshotRequest = async () => {
+    return await makeRequest(getApiUrl('/api/scrape-screenshot'), {
       method: 'POST',
       body: JSON.stringify({ url }),
     });
+  };
+
+  try {
+    const response = await makeScreenshotRequest();
 
     if (!response.ok) {
+      if (response.status === 404) {
+        const errorResult = await handleApiError(response, 'scrapeScreenshot', makeScreenshotRequest);
+        if (errorResult instanceof Response) {
+          const data = await errorResult.json();
+          return { ok: true, ...data };
+        }
+      }
       return await handleApiError(response, 'scrapeScreenshot');
     }
 
@@ -395,19 +459,29 @@ const scrapeScreenshot = async (url: string) => {
 };
 
 const scrapeUrlEnhanced = async (url: string) => {
-  try {
-    const response = await makeRequest(getApiUrl('/api/scrape-url-enhanced'), {
+  const makeScrapeRequest = async () => {
+    return await makeRequest(getApiUrl('/api/scrape-url-enhanced'), {
       method: 'POST',
       body: JSON.stringify({ url }),
     });
+  };
 
-    return response; // Return response directly for caller to handle
+  try {
+    const response = await makeScrapeRequest();
+    
+    if (!response.ok && response.status === 404) {
+      const errorResult = await handleApiError(response, 'scrapeUrlEnhanced', makeScrapeRequest);
+      if (errorResult instanceof Response) {
+        return errorResult;
+      }
+    }
+    
+    return response;
   } catch (error) {
     console.error('[PythonAPI] scrapeUrlEnhanced error:', error);
     throw error;
   }
 };
-
 const killSandbox = async () => {
   try {
     const response = await makeRequest(getApiUrl('/api/kill-sandbox'), {

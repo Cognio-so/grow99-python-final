@@ -7,19 +7,35 @@ import threading
 import time
 import os  # <-- Make sure os is imported
 
-# --- RENDER/LOCAL DYNAMIC PATH LOGIC ---
-# Render automatically sets the 'RENDER' environment variable to 'true'.
-# We can check for this to determine the environment.
-if os.getenv('RENDER') == 'true':
-    # We are on Render, so use the persistent disk path.
-    # Make sure this matches the Mount Path of your disk on Render.
-    storage_path = Path('/app/data')
-else:
-    # We are not on Render (running locally), so use a local folder.
-    storage_path = Path(__file__).resolve().parent.parent / 'local_data'
+# Enhanced environment detection with detailed logging
+render_env = os.getenv('RENDER') == 'true'
+print(f"[database] Environment: {'Render' if render_env else 'Local'}")
+print(f"[database] RENDER env var: {os.getenv('RENDER')}")
 
-# Define the final database path
+if render_env:
+    storage_path = Path('/app/data')
+    print(f"[database] Render environment detected, using: {storage_path}")
+    
+    # Verify persistent disk mounting
+    try:
+        storage_path.mkdir(parents=True, exist_ok=True)
+        test_file = storage_path / 'render_test.tmp'
+        test_file.write_text('render_test')
+        test_file.unlink()
+        print(f"[database] Render storage is writable: {storage_path}")
+    except Exception as e:
+        print(f"[database] WARNING: Render storage issue: {e}")
+        # Fallback to temp storage
+        storage_path = Path('/tmp/growth99_data')
+        storage_path.mkdir(parents=True, exist_ok=True)
+        print(f"[database] Fallback to temp storage: {storage_path}")
+else:
+    storage_path = Path(__file__).resolve().parent.parent / 'local_data'
+    storage_path.mkdir(parents=True, exist_ok=True)
+    print(f"[database] Local environment detected, using: {storage_path}")
+
 DB_PATH = storage_path / 'sandbox_state.db'
+print(f"[database] Final database path: {DB_PATH}")
 # --- END OF NEW LOGIC ---
 
 
@@ -133,6 +149,15 @@ def get_sandbox_state() -> Optional[Dict[str, Any]]:
 def set_sandbox_state(state: Optional[Dict[str, Any]], user_ip: str = None, session_id: str = None):
     try:
         current_time = int(time.time() * 1000)
+        
+        # ENHANCED LOGGING
+        if state:
+            print(f"[database] CREATING sandbox: {state.get('sandboxId')} on {'Render' if os.getenv('RENDER') == 'true' else 'Local'}")
+            print(f"[database] Sandbox URL: {state.get('url')}")
+            print(f"[database] User IP: {user_ip}")
+        else:
+            print(f"[database] DELETING sandbox on {'Render' if os.getenv('RENDER') == 'true' else 'Local'}")
+        
         with get_connection() as conn:
             if state:
                 core_fields = {'sandboxId', 'url', 'active', 'createdAt', 'updatedAt', 'lastActivity', 'sessionId', 'userIP'}
@@ -140,6 +165,7 @@ def set_sandbox_state(state: Optional[Dict[str, Any]], user_ip: str = None, sess
                 if not session_id:
                     import uuid
                     session_id = str(uuid.uuid4())
+                
                 conn.execute('''
                     UPDATE sandbox_state SET sandbox_id = ?, url = ?, active = 1, 
                         created_at = COALESCE(created_at, ?), updated_at = ?, last_activity = ?,
@@ -148,6 +174,7 @@ def set_sandbox_state(state: Optional[Dict[str, Any]], user_ip: str = None, sess
                     state.get('sandboxId'), state.get('url'), state.get('createdAt', current_time),
                     current_time, current_time, session_id, user_ip, json.dumps(metadata)
                 ))
+                print(f"[database] Sandbox {state.get('sandboxId')} saved to database")
             else:
                 cursor = conn.execute('SELECT sandbox_id FROM sandbox_state WHERE id = 1')
                 row = cursor.fetchone()
@@ -157,15 +184,18 @@ def set_sandbox_state(state: Optional[Dict[str, Any]], user_ip: str = None, sess
                         INSERT INTO cleanup_log (sandbox_id, cleanup_time, cleanup_reason, success)
                         VALUES (?, ?, ?, ?)
                     ''', (old_sandbox_id, current_time, 'manual_cleanup', 1))
+                    print(f"[database] Logged cleanup of sandbox: {old_sandbox_id}")
+                
                 conn.execute('''
                     UPDATE sandbox_state SET sandbox_id = NULL, url = NULL, active = 0, 
                         updated_at = ?, last_activity = NULL, session_id = NULL,
                         user_ip = NULL, metadata = '{}' WHERE id = 1
                 ''', (current_time,))
+                print(f"[database] Sandbox state cleared from database")
+            
             conn.commit()
-            print(f"[database] Sandbox state {'saved' if state else 'cleared'}")
     except Exception as e:
-        print(f"[database] Error setting sandbox state: {e}")
+        print(f"[database] ERROR setting sandbox state: {e}")
 
 def update_activity():
     try:

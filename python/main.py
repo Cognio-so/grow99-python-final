@@ -187,11 +187,11 @@ async def get_active_sandbox() -> Any:
 # --- FastAPI Lifespan & App Initialization (Simplified) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Backend starting...")
+    print("ðŸš€ Backend starting...")
     init_database()
     cleanup_task = asyncio.create_task(session_manager.start_cleanup_task())
     yield
-    print("🛑 Backend shutting down...")
+    print("ðŸ›‘ Backend shutting down...")
     session_manager.stop()
     cleanup_task.cancel()
 
@@ -516,6 +516,6 @@ async def debug_cleanup_stats():
 # --- Main Entrypoint ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    print(f"🚀 Backend ready and running on http://localhost:{port}")
+    print(f"ðŸš€ Backend ready and running on http://localhost:{port}")
     # For production on Render, reload should be False
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

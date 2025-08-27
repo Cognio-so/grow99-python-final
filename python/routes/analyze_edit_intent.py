@@ -356,6 +356,7 @@ CRITICAL: For styling changes, do NOT include App.jsx unless absolutely necessar
         return {
             'editType': llm_plan.get("editType", "UPDATE_STYLE"),
             'targetFiles': target_files,
+            'targetSections': llm_plan.get("targetSections", []), 
             'preserveExisting': True,
             'enhanceOnly': llm_plan.get("editType") == "UPDATE_STYLE",
             'confidence': llm_plan.get("confidence", 0.7),
@@ -370,6 +371,7 @@ CRITICAL: For styling changes, do NOT include App.jsx unless absolutely necessar
         return {
             'editType': "UPDATE_STYLE",
             'targetFiles': app_files[:1],
+            'targetSections': [],
             'preserveExisting': True,
             'enhanceOnly': True,
             'confidence': 0.5,
@@ -391,12 +393,16 @@ def build_edit_context(prompt: str, manifest: Dict[str, Any], strategy: Dict[str
     
     # Limit context files to prevent overflow
     context_files = context_files[:3]
-    
+    target_sections = strategy.get('targetSections', [])
     # Build system prompt
     if strategy['enhanceOnly']:
         system_prompt = f"""🚨 CRITICAL ENHANCEMENT MODE - PRESERVE ALL EXISTING CONTENT
 
 USER REQUEST: "{prompt}"
+🎯 EDIT CONTEXT:
+- Edit Type: {strategy.get('editType', 'UPDATE_COMPONENT')}
+- Target Sections: {target_sections}  # Use the safe variable
+- Preserve Existing: {strategy.get('preserveExisting', True)}
 
 🎯 ENHANCEMENT INSTRUCTIONS:
 1. This is a VISUAL ENHANCEMENT request - DO NOT change text content

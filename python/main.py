@@ -179,7 +179,7 @@ async def get_active_sandbox() -> Any:
         try:
             print(f"[dependency] Attempting to connect to existing sandbox: {sandbox_id}")
             api_key = os.getenv("E2B_API_KEY")
-            # --- FIX 1: Use .connect() instead of .reconnect() ---
+            print(f"snbox")
             sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key) 
             print(f"[dependency] ✅ Successfully connected to sandbox {sandbox_id}")
             return sandbox

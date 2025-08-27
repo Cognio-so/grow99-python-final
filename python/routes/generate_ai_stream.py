@@ -440,6 +440,7 @@ def analyze_intent_node(state: AgentState) -> AgentState:
                     result = analyze_module.POST({
                         'prompt': prompt,
                         'manifest': manifest,
+                        'model': state["model"],
                         
                     })
                     if result.get('success'):

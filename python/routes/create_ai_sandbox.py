@@ -264,17 +264,18 @@ async def _get_sandbox_id_compat(sandbox):
         return getattr(info, "sandbox_id", None) or getattr(info, "id", None)
     raise AttributeError("Could not determine sandbox ID from SDK object.")
 
-async def POST() -> Dict[str, Any]:
-    """Creates a new E2B sandbox, sets up a Vite+React+Tailwind environment,
-    and saves its state to a centralized file for other processes to use."""
+async def _create_and_setup_sandbox() -> Dict[str, Any]:
+    """
+    Core logic to create, configure, and save a new E2B sandbox.
+    This is now reusable and handles the entire setup process.
+    """
     sandbox: Optional[Any] = None
-
     try:
         # Step 1: Clear any old state from the central file.
-        print("[create-ai-sandbox] Clearing any previous sandbox state...")
+        print("[_create_and_setup_sandbox] Clearing any previous sandbox state...")
         set_sandbox_state(None)
 
-        print("[create-ai-sandbox] Creating new E2B sandbox...")
+        print("[_create_and_setup_sandbox] Creating new E2B sandbox...")
         if E2BSandbox is None:
             raise RuntimeError("E2B Sandbox library is not available or failed to import.")
 
@@ -283,50 +284,26 @@ async def POST() -> Dict[str, Any]:
         # Check SDK version and handle api_key differently
         if hasattr(E2BSandbox, "create"):
             create_fn = getattr(E2BSandbox, "create", None)
-
-            if create_fn and inspect.iscoroutinefunction(create_fn):
-                # If `create` is async
-                sandbox = await create_fn(api_key=api_key)
-            elif create_fn:
-                # If `create` is sync
-                sandbox = create_fn(api_key=api_key)
-            else:
-                # Fallback: legacy SDK initialization
-                sandbox = E2BSandbox()
+            sandbox = await create_fn(api_key=api_key) if inspect.iscoroutinefunction(create_fn) else create_fn(api_key=api_key)
         else:
-            # Fallback to direct instantiation (legacy)
             sandbox = E2BSandbox(api_key=api_key)
 
-        # Get the sandbox ID
         sandbox_id = await _get_sandbox_id_compat(sandbox)
-        print(f"[create-ai-sandbox] Sandbox created with ID: {sandbox_id}")
+        print(f"[_create_and_setup_sandbox] Sandbox created with ID: {sandbox_id}")
 
-        # Step 2: Set up the Vite environment inside the sandbox.
         vite_started = await ensure_vite_server(sandbox, sandbox_id)
-
-        # Step 3: Get the correct, accessible URL for the sandbox.
         sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
 
-        # Step 4: Create the state dictionary to save centrally.
         new_state = {
             "sandboxId": sandbox_id,
             "url": sandbox_url,
             "createdAt": int(time.time() * 1000)
         }
-
-        # Step 5: Save the new state to the central file using our manager.
         set_sandbox_state(new_state)
 
-        print("[create-ai-sandbox] ✅ SUCCESS: Sandbox created and state saved centrally!")
-        print(f"[create-ai-sandbox] URL: {sandbox_url}")
-
-        # Step 6: Close the temporary connection. Future requests will reconnect using the ID.
-        if hasattr(sandbox, "close"):
-            if inspect.iscoroutinefunction(sandbox.close):
-                await sandbox.close()
-            else:
-                sandbox.close()
-
+        print("[_create_and_setup_sandbox] ✅ SUCCESS: Sandbox state saved centrally!")
+        
+        # Return all necessary data
         return {
             "success": True,
             "sandboxId": sandbox_id,
@@ -335,19 +312,24 @@ async def POST() -> Dict[str, Any]:
             "viteRunning": vite_started,
             "tailwindConfigured": True,
         }
-
-    except Exception as error:
-        print(f"[create-ai-sandbox] CRITICAL ERROR: {error}")
-        # Ensure state is cleared on failure to prevent using a broken sandbox
-        set_sandbox_state(None)
-
+    finally:
+        # IMPORTANT: Always close the temporary connection used for setup.
         if sandbox and hasattr(sandbox, "close"):
-            try:
-                if inspect.iscoroutinefunction(sandbox.close): await sandbox.close()
-                else: sandbox.close()
-            except Exception as e:
-                print(f"Failed to close sandbox during error handling: {e}")
+            if inspect.iscoroutinefunction(sandbox.close):
+                await sandbox.close()
+            else:
+                sandbox.close()
 
+async def POST() -> Dict[str, Any]:
+    """
+    Creates a new E2B sandbox by calling the reusable setup function.
+    """
+    try:
+        result = await _create_and_setup_sandbox()
+        return result
+    except Exception as error:
+        print(f"[create-ai-sandbox] CRITICAL ERROR in POST handler: {error}")
+        set_sandbox_state(None) # Ensure state is cleared on failure
         import traceback
         return {
             "error": str(error),

@@ -13,34 +13,12 @@ const getApiUrl = (path: string) => {
 
 // Enhanced error handling for API responses
 // Enhanced error handling with auto-recreation
-const handleApiError = async (response: Response, endpoint: string, originalRequest?: () => Promise<Response>) => {
+const handleApiError = async (response: Response, endpoint: string) => {
   console.error(`[PythonAPI] Error in ${endpoint}:`, response.status, response.statusText);
   
   try {
     const errorData = await response.json();
     console.error(`[PythonAPI] Error details:`, errorData);
-    
-    // AUTO-RECREATION LOGIC - Key addition
-    if (response.status === 404 && 
-        (errorData.detail?.includes?.('sandbox') || 
-         errorData.error?.includes?.('sandbox') ||
-         errorData.needsCreation)) {
-      
-      console.log('[PythonAPI] Sandbox expired, auto-creating new one...');
-      
-      try {
-        // Create new sandbox automatically
-        const sandboxResult = await createAiSandbox();
-        
-        if (sandboxResult.ok && originalRequest) {
-          console.log('[PythonAPI] Auto-recreation successful, retrying original request...');
-          // Retry the original request with new sandbox
-          return await originalRequest();
-        }
-      } catch (recreationError) {
-        console.error('[PythonAPI] Auto-recreation failed:', recreationError);
-      }
-    }
     
     return {
       ok: false,
@@ -228,12 +206,10 @@ const generateAiCode = async (
   try {
     const response = await makeGenerateRequest();
     
-    if (!response.ok && response.status === 404) {
-      const errorResult = await handleApiError(response, 'generateAiCode', makeGenerateRequest);
-      if (errorResult instanceof Response) {
-        return errorResult;
-      }
-    }
+   if (!response.ok) {
+    // The backend now handles recreation, so we just return the stream or error directly.
+    return response; 
+}
     
     return response;
   } catch (error) {
@@ -250,8 +226,8 @@ const applyAiCode = async (
 ): Promise<Response> => {
   console.log('[PythonAPI] Applying AI code...');
 
-  const makeApplyRequest = async () => {
-    return await makeRequest(getApiUrl('/api/apply-ai-code-stream'), {
+  try {
+    const response = await makeRequest(getApiUrl('/api/apply-ai-code-stream'), {
       method: 'POST',
       body: JSON.stringify({
         response: code,
@@ -260,19 +236,8 @@ const applyAiCode = async (
         sandboxId: sandboxId || null
       }),
     });
-  };
-
-  try {
-    const response = await makeApplyRequest();
     
-    // Handle 404 errors with auto-recreation
-    if (!response.ok && response.status === 404) {
-      const errorResult = await handleApiError(response, 'applyAiCode', makeApplyRequest);
-      if (errorResult instanceof Response) {
-        return errorResult; // Successfully retried
-      }
-    }
-    
+    // No more 404 handling needed here!
     return response;
   } catch (error) {
     console.error('[PythonAPI] applyAiCode error:', error);
@@ -351,13 +316,10 @@ const getSandboxFiles = async () => {
     const response = await makeFilesRequest();
 
     if (!response.ok) {
-      if (response.status === 404) {
-        const errorResult = await handleApiError(response, 'getSandboxFiles', makeFilesRequest);
-        if (errorResult instanceof Response) {
-          const data = await errorResult.json();
-          return { ok: true, ...data };
-        }
-      }
+      if (!response.ok) {
+    // The backend handles the 404, so we just process the final error response.
+    return await handleApiError(response, 'getSandboxFiles');
+}
       return await handleApiError(response, 'getSandboxFiles');
     }
 
@@ -384,7 +346,7 @@ const restartVite = async () => {
 
     if (!response.ok) {
       if (response.status === 404) {
-        const errorResult = await handleApiError(response, 'restartVite', makeRestartRequest);
+        const errorResult = await handleApiError(response, 'restartVite');
         if (errorResult instanceof Response) {
           const data = await errorResult.json();
           return { ok: true, ...data };
@@ -438,7 +400,7 @@ const scrapeScreenshot = async (url: string) => {
 
     if (!response.ok) {
       if (response.status === 404) {
-        const errorResult = await handleApiError(response, 'scrapeScreenshot', makeScreenshotRequest);
+        const errorResult = await handleApiError(response, 'scrapeScreenshot');
         if (errorResult instanceof Response) {
           const data = await errorResult.json();
           return { ok: true, ...data };
@@ -470,7 +432,7 @@ const scrapeUrlEnhanced = async (url: string) => {
     const response = await makeScrapeRequest();
     
     if (!response.ok && response.status === 404) {
-      const errorResult = await handleApiError(response, 'scrapeUrlEnhanced', makeScrapeRequest);
+      const errorResult = await handleApiError(response, 'scrapeUrlEnhanced');
       if (errorResult instanceof Response) {
         return errorResult;
       }

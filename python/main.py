@@ -19,10 +19,13 @@ from routes.database import init_database, close_connection
 import atexit
 # ADDED: Centralized state and E2B imports
 from routes.state_manager import get_sandbox_state
+from routes.create_ai_sandbox import _create_and_setup_sandbox
+from routes.database import get_sandbox_state
+# ADD this to handle potential E2B SDK differences
 try:
     from e2b_code_interpreter import Sandbox as E2BSandbox
 except Exception:
-    E2BSandbox = None
+    from e2b import Sandbox as E2BSandbox
 
 # --- Project Paths (No changes) ---
 ROOT = Path(__file__).parent.resolve()
@@ -162,27 +165,50 @@ async def maybe_await(value: Any) -> Any:
 
 async def get_active_sandbox() -> Any:
     """
-    FastAPI dependency with automatic sandbox recreation on failure
+    FastAPI dependency with automatic sandbox recreation on failure.
+    CORRECTED to use .connect() for SDK compatibility.
     """
     if not E2BSandbox:
         raise HTTPException(status_code=500, detail="E2B SDK is not installed on the server.")
 
-    from routes.database import get_sandbox_state, set_sandbox_state
     state = get_sandbox_state()
     
-    if not state or not state.get("sandboxId"):
-        raise HTTPException(status_code=404, detail="No active sandbox. Please create one first via POST /api/create-ai-sandbox.")
-
-    sandbox_id = state["sandboxId"]
+    # If a sandbox ID exists, try to connect to it.
+    if state and state.get("sandboxId"):
+        sandbox_id = state["sandboxId"]
+        try:
+            print(f"[dependency] Attempting to connect to existing sandbox: {sandbox_id}")
+            api_key = os.getenv("E2B_API_KEY")
+            # --- FIX 1: Use .connect() instead of .reconnect() ---
+            sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key) 
+            print(f"[dependency] ✅ Successfully connected to sandbox {sandbox_id}")
+            return sandbox
+        except Exception as e:
+            print(f"[dependency] ⚠️ Sandbox {sandbox_id} connection failed: {e}. It has likely expired.")
+            print("[dependency] 🚀 Triggering automatic sandbox recreation...")
+            # FALLTHROUGH to recreation logic below
+    
+    # If there was no state OR the connection failed, create a new sandbox.
     try:
+        creation_result = await _create_and_setup_sandbox()
+        if not creation_result.get("success"):
+            # Use the error message from the creation function if available
+            error_detail = creation_result.get("error", "Failed to automatically recreate sandbox.")
+            raise HTTPException(status_code=500, detail=error_detail)
+        
+        new_sandbox_id = creation_result["sandboxId"]
+        print(f"[dependency] 🔄 New sandbox {new_sandbox_id} created. Connecting to finalize...")
         api_key = os.getenv("E2B_API_KEY")
-        sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key)
-        return sandbox
+        # --- FIX 2: Use .connect() here as well ---
+        new_sandbox = E2BSandbox.connect(new_sandbox_id, api_key=api_key)
+        print(f"[dependency] ✅ Connection to new sandbox successful. Proceeding with request.")
+        return new_sandbox
+        
     except Exception as e:
-        print(f"[dependency] Sandbox {sandbox_id} connection failed: {e}")
-        # Clear the expired state
-        set_sandbox_state(None)
-        raise HTTPException(status_code=404, detail="Sandbox expired. Create a new one via POST /api/create-ai-sandbox.")
+        print(f"[dependency] ❌ CRITICAL: Automatic recreation failed. Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Sandbox expired and automatic recreation failed: {e}")
 
 # --- FastAPI Lifespan & App Initialization (Simplified) ---
 @asynccontextmanager

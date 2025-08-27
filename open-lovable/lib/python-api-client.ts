@@ -102,9 +102,17 @@ const handleStreamingResponse = async (
       const { done, value } = await reader.read();
       
       if (done) {
+        // Process any remaining data in the buffer when the stream ends
+        if (buffer.trim()) {
+          try {
+            const data = JSON.parse(buffer.replace(/^data: /, ''));
+            onProgress(data);
+          } catch {
+            console.warn('[PythonAPI] Failed to parse final SSE data chunk:', buffer);
+          }
+        }
         break;
       }
-
       buffer += decoder.decode(value, { stream: true });
       
       // Process complete lines
@@ -112,14 +120,19 @@ const handleStreamingResponse = async (
       buffer = lines.pop() || ''; // Keep the incomplete line in buffer
 
       for (const line of lines) {
-        if (line.trim() === '') continue;
-        
+        if (line.trim() === '') continue; // Skip empty lines
+
         if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            onProgress(data);
-          } catch {
-            console.warn('[PythonAPI] Failed to parse SSE data:', line);
+          const jsonString = line.substring(6).trim(); // Remove 'data: ' prefix
+          if (jsonString) {
+            try {
+              const data = JSON.parse(jsonString);
+              // This is a complete, valid JSON object
+              onProgress(data);
+            } catch (e) {
+              console.warn('[PythonAPI] Failed to parse SSE JSON:', jsonString, e);
+              // This can happen if a chunk splits a JSON object. The buffer handles this.
+            }
           }
         }
       }

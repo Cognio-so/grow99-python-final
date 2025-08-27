@@ -9,6 +9,7 @@ import asyncio
 from typing import Dict, List, Optional, TypedDict, Any, AsyncGenerator
 
 from dotenv import load_dotenv
+from routes.database import get_sandbox_state
 
 # LangChain core
 from langchain_core.prompts import ChatPromptTemplate
@@ -438,7 +439,8 @@ def analyze_intent_node(state: AgentState) -> AgentState:
                     print("[analyze_intent] Found analyze_edit_intent module, calling POST")
                     result = analyze_module.POST({
                         'prompt': prompt,
-                        'manifest': manifest
+                        'manifest': manifest,
+                        
                     })
                     if result.get('success'):
                         edit_context = result.get('editContext')
@@ -555,6 +557,24 @@ The following design principles MUST be respected in every output. If a user req
 
 — End of Guardrails —
 """
+    verification_checklist = """
+🚨 NEW: FINAL VERIFICATION CHECKLIST - YOU MUST FOLLOW THIS PROCESS EXACTLY:
+BEFORE you write any code, you must mentally complete this checklist. A violation of this process will result in a failed generation.
+
+1.  **INVENTORY COMPONENTS**: First, create a complete list of every single component you plan to generate. For example: `["Header.jsx", "Hero.jsx", "Footer.jsx"]`.
+
+2.  **CROSS-REFERENCE App.jsx**: Look at the list from step 1. Your `App.jsx` file MUST import every component in that list, and ONLY the components in that list.
+    * ✅ **CORRECT LOGIC**: "My list is `["Header.jsx", "Hero.jsx"]`. Therefore, `App.jsx` must contain `import Header from './components/Header'` and `import Hero from './components/Hero'`. The final JSX must use `<Header />` and `<Hero />`."
+    * ❌ **INCORRECT LOGIC**: "I will import `Nav.jsx` in `App.jsx` but I will not generate the `Nav.jsx` file." (This is a failure).
+    * ❌ **INCORRECT LOGIC**: "I will generate `Footer.jsx` but forget to import and use it in `App.jsx`." (This is a failure).
+
+3.  **VALIDATE SYNTAX**: Mentally review the code you are about to write. Ensure there are no open tags, missing quotes, or other basic syntax errors. Pay special attention to `className` attributes and ensure all quotes are straight (`"`) not curly (`“`).
+
+4.  **GUARANTEE COMPLETENESS**: Confirm that you will generate the **full, complete code** for EVERY file. If you import 5 components in `App.jsx`, you MUST generate 5 component files plus the `App.jsx` file itself.
+
+Only after you have confirmed these four steps can you begin writing the code using the specified XML format. This checklist is your most important instruction for ensuring the generated code works.
+"""
+    system_prompt+=verification_checklist
     # Add edit mode instructions if this is an edit
     if is_edit:
         system_prompt += """CRITICAL: THIS IS AN EDIT TO AN EXISTING APPLICATION
@@ -1667,8 +1687,8 @@ async def stream_generate_code(
     """
     An async generator that yields progress events for code generation.
     """
-    global conversation_state
-
+    global conversation_state, sandbox_state
+    sandbox_state = get_sandbox_state()
     if context is None:
         context = {}
     if conversation_state is None:

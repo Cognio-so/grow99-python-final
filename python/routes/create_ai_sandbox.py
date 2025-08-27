@@ -38,8 +38,8 @@ try:
 except Exception:
     appConfig = SimpleNamespace(
         e2b=SimpleNamespace(
-            timeoutMinutes=15,
-            timeoutMs=15 * 60 * 1000,
+            timeoutMinutes=55,
+            timeoutMs=55 * 60 * 1000,
             vitePort=5173,
             viteStartupDelay=8000,
         )

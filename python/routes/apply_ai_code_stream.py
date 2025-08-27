@@ -68,7 +68,13 @@ def sanitize_content_for_utf8(content: str) -> str:
         '\u00b4': "'",  # Acute accent (often mistaken for apostrophe)
         '\u0060': "'",  # Grave accent
         '\u00e9': 'e',  # é -> e
-        '\u00e8': 'e',  # è -> e
+        '\u00e8': 'e', 
+         '“': '"',      # Alternative curly quotes
+        '”': '"',
+        '‘': "'",
+        '’': "'",
+        '—': '--',
+        '…': '...', # è -> e
     }
     
     for old, new in smart_quotes.items():
@@ -536,6 +542,8 @@ except:
     except Exception as e:
         print(f"[check_vite_errors] Error: {e}")
         return ""
+# PASTE THIS ENTIRE BLOCK
+
 def parse_ai_response(response: str) -> Dict[str, Any]:
     """FIXED: Enhanced AI response parser with robust file detection"""
     sections: Dict[str, Any] = {
@@ -549,46 +557,10 @@ def parse_ai_response(response: str) -> Dict[str, Any]:
 
     print(f"[parse_ai_response] Parsing response of {len(response)} characters")
     response = sanitize_content_for_utf8(response)
-    # Function to extract packages from import statements
-    import re
     
-    file_pattern = r'<file\s+path="([^"]+)"[^>]*>(.*?)</file>'
-    matches = re.findall(file_pattern, response, re.DOTALL)
-    for path, file_content in matches:
-        clean_content = file_content.strip()
-        if clean_content and len(clean_content) > 10:
-            sections["files"].append({
-                "path": path,
-                "content": clean_content
-            })
-            print(f"[parse_ai_response] Added: {path} ({len(clean_content)} chars)")
-    
-    def extract_packages_from_code(content: str) -> List[str]:
-        packages = []
-        # Match ES6 imports
-        import_regex = re.compile(r'import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?[\'"]([^\'"]+)[\'"]')
-        
-        for import_match in import_regex.finditer(content):
-            import_path = import_match.group(1)
-            # Skip relative imports and built-in React
-            if (not import_path.startswith('.') and not import_path.startswith('/') and 
-                import_path != 'react' and import_path != 'react-dom' and
-                not import_path.startswith('@/')):
-                # Extract package name (handle scoped packages like @heroicons/react)
-                if import_path.startswith('@'):
-                    package_name = '/'.join(import_path.split('/')[:2])
-                else:
-                    package_name = import_path.split('/')[0]
-                
-                if package_name not in packages:
-                    packages.append(package_name)
-                    print(f'[parse_ai_response] Package detected from imports: {package_name}')
-        
-        return packages
-
-    # FIXED: Parse file sections with ROBUST detection - handle duplicates and prefer complete versions
+    # Use a temporary map to hold the definitive version of each file
     file_map = {}
-    
+
     # Strategy 1: Standard XML format (preferred)
     xml_pattern = r'<file\s+path="([^"]+)">(.*?)</file>'
     xml_matches = re.findall(xml_pattern, response, re.DOTALL)
@@ -598,109 +570,13 @@ def parse_ai_response(response: str) -> Dict[str, Any]:
         for path, content in xml_matches:
             cleaned_content = sanitize_content_for_utf8(content.strip())
             if cleaned_content:
-                file_map[path] = {"content": cleaned_content, "is_complete": True}
+                file_map[path] = cleaned_content
                 print(f"[parse_ai_response] XML: {path} ({len(cleaned_content)} chars)")
-
-    # Strategy 2: Incomplete XML (streaming or cut-off)
+    
+    # Strategy 2: Code blocks (only if XML fails)
     if not file_map:
-        incomplete_pattern = r'<file\s+path="([^"]+)">(.*?)(?=<file|$)'
-        incomplete_matches = re.findall(incomplete_pattern, response, re.DOTALL)
-
-        if incomplete_matches:
-            print(f"[parse_ai_response] Found {len(incomplete_matches)} incomplete XML files")
-            for path, content in incomplete_matches:
-                cleaned_content = sanitize_content_for_utf8(content.replace("</file>", "").strip())
-                if cleaned_content and len(cleaned_content) > 10:
-                    file_map[path] = {"content": cleaned_content, "is_complete": False}
-                    print(f"[parse_ai_response] Incomplete XML: {path} ({len(cleaned_content)} chars)")
-
-    # Strategy 3: Code blocks with file paths
-    if not file_map:
-        code_block_patterns = [
-            r'```(?:jsx|js|javascript|tsx|ts|css)\s+(?:path=["\'`])?([^\s\n"\'`]+\.(?:jsx?|tsx?|css))\s*\n(.*?)\n```',
-            r'```(?:jsx|js|javascript|tsx|ts|css)\s*\n(?://\s*)?([^\s\n]+\.(?:jsx?|tsx?|css))\s*\n(.*?)\n```',
-        ]
-        
-        for pattern in code_block_patterns:
-            code_matches = re.findall(pattern, response, re.DOTALL)
-            if code_matches:
-                print(f"[parse_ai_response] Found {len(code_matches)} code block files")
-                for path, content in code_matches:
-                    # Ensure path starts with src/ if it's a component
-                    if not path.startswith("src/") and (path.endswith('.jsx') or path.endswith('.tsx') or path.endswith('.js') or path.endswith('.ts')):
-                        if "components/" in path:
-                            path = "src/" + path
-                        elif not path.startswith("/") and path != "index.css":
-                            path = "src/" + path
-                    elif path == "index.css":
-                        path = "src/index.css"
-                    
-                    cleaned_content = sanitize_content_for_utf8(content.strip())
-                    if cleaned_content:
-                        file_map[path] = {"content": cleaned_content, "is_complete": True}
-                        print(f"[parse_ai_response] Code block: {path}")
-                break
-
-    # Strategy 4: Markdown-style file headers
-    if not file_map:
-        markdown_pattern = r'\*\*(src/[^*\n]+)\*\*\s*```(?:jsx|js|css|json)?\s*\n(.*?)\n```'
-        markdown_matches = re.findall(markdown_pattern, response, re.DOTALL)
-
-        if markdown_matches:
-            print(f"[parse_ai_response] Found {len(markdown_matches)} markdown files")
-            for path, content in markdown_matches:
-                file_map[path] = {"content": sanitize_content_for_utf8(content.strip()), "is_complete": True}
-                print(f"[parse_ai_response] Markdown: {path}")
-
-    # Strategy 5: React component detection and intelligent extraction
-    if not file_map and ("import React" in response or "function App" in response or "export default" in response):
-        print("[parse_ai_response] Detected React code, attempting intelligent extraction")
-
-        # Try to find complete React components
-        component_patterns = [
-            # Full component with imports and export
-            r'(import React.*?(?:export default \w+|export \{ \w+ as default \}))',
-            # Just the component function/class
-            r'((?:function|const) \w+.*?export default \w+)',
-        ]
-
-        extracted_components = []
-        for pattern in component_patterns:
-            matches = re.findall(pattern, response, re.DOTALL)
-            extracted_components.extend(matches)
-
-        if extracted_components:
-            # Create App.jsx from the largest component
-            largest_component = max(extracted_components, key=len)
-            file_map["src/App.jsx"] = {"content": sanitize_content_for_utf8(largest_component.strip()), "is_complete": True}
-            print("[parse_ai_response] Extracted React component as App.jsx")
-
-        # Always add a basic index.css for React apps
-        if not any(path.endswith("index.css") for path in file_map):
-            file_map["src/index.css"] = {
-                "content": sanitize_content_for_utf8("@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nbody {\n  margin: 0;\n  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n}"),
-                "is_complete": True
-            }
-            print("[parse_ai_response] Added default index.css")
-
-    # Strategy 6: Last resort - try to extract any code that looks like a file
-    if not file_map:
-        print("[parse_ai_response] No files found, trying last resort extraction...")
-        
-        # Look for any JSX/JS content
-        jsx_content = re.search(r'(function \w+.*?export default \w+)', response, re.DOTALL)
-        if jsx_content:
-            file_map["src/App.jsx"] = {"content": sanitize_content_for_utf8(jsx_content.group(1).strip()), "is_complete": False}
-            print("[parse_ai_response] Last resort: extracted JSX as App.jsx")
-
-        # Look for CSS content
-        css_content = re.search(r'(@tailwind base;.*?)', response, re.DOTALL)
-        if css_content:
-            file_map["src/index.css"] = {"content": sanitize_content_for_utf8(css_content.group(1).strip()), "is_complete": False}
-            print("[parse_ai_response] Last resort: extracted CSS as index.css")
-    if not sections["files"]:
         print("[parse_ai_response] No XML files found, trying code blocks")
-        code_pattern = r'```(?:jsx|js|css|html)\s*\n(?://\s*)?([^\n]+\.(jsx?|css|html))\s*\n(.*?)\n```'
+        code_pattern = r'```(?:jsx|js|css|html)\s*\n(?://\s*)?([^\n]+\.(?:jsx?|css|html))\s*\n(.*?)\n```'
         code_matches = re.findall(code_pattern, response, re.DOTALL)
         
         for path, ext, file_content in code_matches:
@@ -709,68 +585,45 @@ def parse_ai_response(response: str) -> Dict[str, Any]:
             
             clean_content = file_content.strip()
             if clean_content:
-                sections["files"].append({
-                    "path": path,
-                    "content": clean_content
-                })
+                file_map[path] = clean_content
                 print(f"[parse_ai_response] Added from code block: {path}")
-    # Convert file_map to sections.files
-    for path, info in file_map.items():
-        if not info["is_complete"]:
-            print(f'[parse_ai_response] Warning: File {path} appears to be truncated')
-        
+
+    # Convert the final file_map to the sections['files'] list
+    for path, content in file_map.items():
         sections["files"].append({
             "path": path,
-            "content": info["content"]
+            "content": content
         })
-        
-        # Extract packages from file content
-        file_packages = extract_packages_from_code(info["content"])
+
+    # --- Package and other section parsing ---
+    def extract_packages_from_code(content: str) -> List[str]:
+        packages = []
+        import_regex = re.compile(r'import\s+(?:.*?\s+from\s+)?[\'"]([^\'"]+)[\'"]')
+        for import_match in import_regex.finditer(content):
+            import_path = import_match.group(1)
+            if not import_path.startswith('.') and not import_path.startswith('/') and import_path not in ('react', 'react-dom'):
+                package_name = '/'.join(import_path.split('/')[:2]) if import_path.startswith('@') else import_path.split('/')[0]
+                if package_name not in packages:
+                    packages.append(package_name)
+        return packages
+
+    for file_info in sections["files"]:
+        file_packages = extract_packages_from_code(file_info["content"])
         for pkg in file_packages:
             if pkg not in sections["packages"]:
                 sections["packages"].append(pkg)
-                print(f'[parse_ai_response] Package detected from {path}: {pkg}')
-
-    # Parse commands
+    
+    # Parse commands, packages, etc.
     cmd_regex = re.compile(r'<command>(.*?)</command>')
-    for match in cmd_regex.finditer(response):
-        sections["commands"].append(match.group(1).strip())
+    for match in cmd_regex.finditer(response): sections["commands"].append(match.group(1).strip())
 
-    # Parse packages - support both <package> and <packages> tags
     pkg_regex = re.compile(r'<package>(.*?)</package>')
     for match in pkg_regex.finditer(response):
         pkg_name = match.group(1).strip()
-        if pkg_name not in sections["packages"]:
-            sections["packages"].append(pkg_name)
-
-    # Also parse <packages> tag with multiple packages
-    packages_regex = re.compile(r'<packages>([\s\S]*?)</packages>')
-    packages_match = packages_regex.search(response)
-    if packages_match:
-        packages_content = packages_match.group(1).strip()
-        # Split by newlines or commas
-        packages_list = [
-            pkg.strip() for pkg in re.split(r'[\n,]+', packages_content)
-            if pkg.strip()
-        ]
-        for pkg in packages_list:
-            if pkg not in sections["packages"]:
-                sections["packages"].append(pkg)
-
-    # Parse structure
-    structure_match = re.search(r'<structure>([\s\S]*?)</structure>', response)
-    if structure_match:
-        sections["structure"] = structure_match.group(1).strip()
-
-    # Parse explanation
+        if pkg_name not in sections["packages"]: sections["packages"].append(pkg_name)
+    
     explanation_match = re.search(r'<explanation>([\s\S]*?)</explanation>', response)
-    if explanation_match:
-        sections["explanation"] = explanation_match.group(1).strip()
-
-    # Parse template
-    template_match = re.search(r'<template>(.*?)</template>', response)
-    if template_match:
-        sections["template"] = template_match.group(1).strip()
+    if explanation_match: sections["explanation"] = explanation_match.group(1).strip()
 
     print(f"[parse_ai_response] FINAL RESULT: Parsed {len(sections['files'])} files, {len(sections['packages'])} packages")
     for f in sections['files']:

@@ -668,21 +668,48 @@ async def POST(request: Any):
             return error_response
         return JSONResponse(content=error_response, status_code=500)
 
-    # CRITICAL FIX: Remove filtering logic - let LLM handle everything intelligently
+    # CRITICAL FIX: Validate edit mode file targeting
     if is_edit and parsed.get("files"):
         files_array = parsed.get("files", [])
         
-        # Just log what the LLM decided, don't filter
+        # Check if App.jsx is being unnecessarily modified
         app_jsx_files = [f for f in files_array if 'App.jsx' in f.get('path', '')]
         component_files = [f for f in files_array if 'components/' in f.get('path', '')]
         
-        print(f"[apply-ai-code-stream] ℹ️ LLM selected {len(files_array)} files:")
-        for file_info in files_array:
-            file_name = file_info.get('path', '').split('/')[-1]
-            print(f"[apply-ai-code-stream]   - {file_name}")
-        
-        # Don't filter anything - let the LLM's decision stand
-        parsed['files'] = files_array
+        if app_jsx_files and component_files:
+            print("[apply-ai-code-stream] ⚠️ WARNING: Both App.jsx and components being modified - this may break app structure")
+            
+            # Get the prompt from the request body
+            user_prompt = body.get('prompt', '').lower()
+            
+            # Enhanced filtering logic with error fix detection
+            style_keywords = ['theme', 'style', 'color', 'earthy', 'design', 'appearance', 'chnage', 'gradient', 'dark mode', 'cyberpunk']
+            text_keywords = ['text', 'content', 'replace', 'change', 'update', 'madam', 'ashish']
+            feature_keywords = ['add', 'create', 'new', 'page', 'section', 'component', 'pricing', 'contact', 'blog', 'about']
+            error_keywords = ['error', 'failed', 'syntax', 'unexpected token', 'cannot resolve', 'compilation failed']
+            
+            is_style_change = any(keyword in user_prompt for keyword in style_keywords)
+            is_text_change = any(keyword in user_prompt for keyword in text_keywords)
+            is_feature_addition = any(keyword in user_prompt for keyword in feature_keywords)
+            is_error_fix = any(keyword in user_prompt for keyword in error_keywords)
+            
+            print(f"[apply-ai-code-stream] 🔍 DEBUG: style={is_style_change}, text={is_text_change}, feature={is_feature_addition}, error={is_error_fix}")
+            
+            if is_error_fix:
+                print("[apply-ai-code-stream]  Error fix detected - keeping all files for comprehensive fix")
+                # Don't filter anything for error fixes - let the LLM fix all affected files
+                parsed['files'] = files_array
+            elif is_style_change or is_text_change:
+                print("[apply-ai-code-stream] 🎨 Style/Text change detected - excluding App.jsx")
+                files_array = [f for f in files_array if 'App.jsx' not in f.get('path', '')]
+                parsed['files'] = files_array
+            elif is_feature_addition:
+                print("[apply-ai-code-stream] 🆕 Feature addition detected - keeping App.jsx for routing")
+                parsed['files'] = files_array
+            elif len(files_array) <= 3:  # Small edit
+                print("[apply-ai-code-stream] 🔧 Small edit detected - prefer component-only changes")
+                files_array = [f for f in files_array if 'components/' in f.get('path', '')]
+                parsed['files'] = files_array
 
     # Ensure globals exist
     global existing_files, active_sandbox, sandbox_data, sandbox_state, conversation_state

@@ -1,3 +1,4 @@
+# Fixed analyze_edit_intent.py - Enhanced file analysis and context building
 
 import os
 import json
@@ -191,52 +192,43 @@ def _detect_error_in_prompt(prompt: str) -> Dict[str, Any]:
     # Common error patterns
     error_patterns = {
         'react_error': [
-            'plugin:vite:react-babel', 'unexpected token', 'jsx', 'react error',
-            'compilation failed', 'syntax error', 'unclosed', 'missing'
+            'error:', 'failed to compile', 'syntax error', 'unexpected token',
+            'cannot read property', 'is not defined', 'unexpected end of input',
+            'missing semicolon', 'unexpected identifier', 'unexpected token',
+            'parsing error', 'compilation failed', 'build failed'
         ],
         'import_error': [
-            'cannot resolve', 'module not found', 'failed to resolve import',
-            'import error', 'missing module'
+            'cannot resolve', 'module not found', 'import error', 'failed to resolve',
+            'does not contain a default export', 'named export', 'export default'
         ],
-        'vite_error': [
-            'plugin:vite', 'vite error', 'build failed', 'compilation error'
+        'jsx_error': [
+            'jsx', 'react', 'component', 'unclosed tag', 'missing closing tag',
+            'unexpected token', 'expected corresponding jsx closing tag'
         ],
-        'general_error': [
-            'error', 'failed', 'exception', 'crash', 'broken'
+        'runtime_error': [
+            'runtime error', 'typeerror', 'referenceerror', 'cannot read',
+            'undefined is not an object', 'null is not an object'
         ]
     }
     
     detected_errors = []
-    error_type = 'general_error'
-    
-    # Check for specific error patterns
-    for pattern_name, patterns in error_patterns.items():
+    for error_type, patterns in error_patterns.items():
         for pattern in patterns:
             if pattern in prompt_lower:
                 detected_errors.append({
-                    'type': pattern_name,
+                    'type': error_type,
                     'pattern': pattern,
-                    'message': prompt
+                    'confidence': 0.8
                 })
-                error_type = pattern_name
-                break
-        if detected_errors:
-            break
-    
     if detected_errors:
         return {
             'is_error': True,
             'errors': detected_errors,
-            'error_type': error_type,
-            'confidence': 0.9 if error_type != 'general_error' else 0.7
+            'error_type': detected_errors[0]['type'],
+            'confidence': max(e['confidence'] for e in detected_errors)
         }
-    
-    return {
-        'is_error': False,
-        'errors': [],
-        'error_type': None,
-        'confidence': 0.0
-    }
+    else:
+        return {'is_error': False}
 
 def _extract_error_context(prompt: str, file_analysis: Dict[str, Any]) -> Dict[str, Any]:
     """Extract error context and identify affected files"""
@@ -287,7 +279,7 @@ def _extract_error_context(prompt: str, file_analysis: Dict[str, Any]) -> Dict[s
     print(f"[_extract_error_context] 🚨 Error context: {error_context}")
     return error_context
 
-def determine_edit_strategy(prompt: str, file_analysis: Dict[str, Any]) -> Dict[str, Any]:
+def determine_edit_strategy(prompt: str, file_analysis: Dict[str, Any], error_context: Dict[str, Any] = None) -> Dict[str, Any]:
     """LLM-only approach for intelligent edit analysis"""
     print(f'[determine_edit_strategy] 🤖 LLM analysis for: "{prompt}"')
     
@@ -299,7 +291,7 @@ def determine_edit_strategy(prompt: str, file_analysis: Dict[str, Any]) -> Dict[
         
         return {
             'editType': 'FIX_ISSUE',
-            'targetFiles': error_context['affected_files'] or error_context['likely_components'],
+            'targetFiles': error_context.get('affected_files', []) or error_context.get('likely_components', []),
             'targetSections': ['error_fix'],
             'preserveExisting': True,
             'enhanceOnly': False,
@@ -326,45 +318,7 @@ def _llm_analysis(prompt: str, file_analysis: Dict[str, Any], components: Dict[s
         if isinstance(comp_info, dict)
     ])
     
-    # Enhanced error detection patterns
-    error_patterns = [
-        'error', 'failed', 'syntax', 'unexpected token', 'cannot resolve', 
-        'compilation failed', 'plugin:vite', 'react-babel', 'module not found',
-        'import', 'export', 'jsx', 'unclosed', 'missing', 'invalid'
-    ]
-    
-    is_error = any(pattern in prompt.lower() for pattern in error_patterns)
-    
-    if is_error:
-        system_prompt = f"""You are an expert React developer analyzing an ERROR MESSAGE. Your job is to identify which files need to be fixed.
-
-ERROR MESSAGE: "{prompt}"
-
-Available files:
-{file_summary}
-
-CRITICAL ERROR ANALYSIS INSTRUCTIONS:
-1. Read the error message carefully
-2. Identify the specific file(s) that contain the error
-3. Determine what type of error it is (syntax, import, JSX, etc.)
-4. Select ONLY the files that need to be modified to fix the error
-5. For syntax errors, include the file mentioned in the error
-6. For import errors, include both the importing file and the missing component
-7. For JSX errors, include the component with the malformed JSX
-
-Return ONLY valid JSON with this exact format:
-{{
-    "editType": "FIX_ISSUE",
-    "targetFiles": ["src/App.jsx", "src/components/Header.jsx"],
-    "reasoning": "Clear explanation of what needs to be fixed and why",
-    "confidence": 0.9,
-    "preserveExisting": true,
-    "enhanceOnly": false
-}}
-
-Return ONLY the JSON, no other text."""
-    else:
-        system_prompt = f"""You are an expert React developer analyzing edit requests. Your job is to intelligently determine which files need to be modified based on the user's request.
+    system_prompt = f"""You are an expert React developer analyzing edit requests. Your job is to intelligently determine which files need to be modified based on the user's request.
 
 Available files:
 {file_summary}
@@ -372,7 +326,7 @@ Available files:
 User request: "{prompt}"
 
 CRITICAL RULES:
-1. For styling/theme/color changes: Target components that handle styling
+1. For styling/theme/color changes: NEVER include App.jsx - only modify individual components
 2. For text/content changes: Target components that likely contain the text
 3. For layout/structure changes: Be conservative and only modify what's necessary
 4. For new features/pages: Include App.jsx for routing AND create new component files
@@ -380,7 +334,7 @@ CRITICAL RULES:
 6. App.jsx should only be modified for: routing changes, adding new pages, or major structural changes
 
 EXAMPLES:
-- "change theme to dark" → targetFiles: ["Header.jsx", "Hero.jsx"] (components with styling)
+- "change theme to dark" → targetFiles: ["Header.jsx", "Hero.jsx"] (NOT App.jsx)
 - "create a new pricing page" → targetFiles: ["App.jsx", "src/components/Pricing.jsx"] (routing + new component)
 - "add a contact form" → targetFiles: ["App.jsx", "src/components/Contact.jsx"] (routing + new component)
 - "replace text madam with ashish" → targetFiles: ["Hero.jsx", "About.jsx"] (components with text)
@@ -418,7 +372,7 @@ Return ONLY the JSON, no other text."""
             if end != -1:
                 json_text = json_text[start:end].strip()
         
-        # Method 3: Look for JSON object directly
+        # Method 3: Try to find JSON object boundaries
         if not json_text.startswith('{'):
             start = json_text.find('{')
             if start != -1:
@@ -426,80 +380,109 @@ Return ONLY the JSON, no other text."""
                 if end > start:
                     json_text = json_text[start:end]
         
-        # Method 4: Clean up common issues
+        # Clean up common JSON issues
         json_text = json_text.replace('\n', ' ').replace('\r', ' ')
-        json_text = re.sub(r'\s+', ' ', json_text).strip()
+        json_text = re.sub(r'[^\x20-\x7E]', '', json_text)  # Remove non-printable chars
+        
+        print(f"[_llm_analysis] Attempting to parse JSON: {json_text[:200]}...")
         
         try:
             llm_plan = json.loads(json_text)
         except json.JSONDecodeError as json_error:
             print(f"[_llm_analysis] JSON parse error: {json_error}")
-            print(f"[_llm_analysis] Attempted to parse: {json_text[:200]}...")
+            print(f"[_llm_analysis] Raw response: {plan_text}")
             
-            # Try to fix common JSON issues
-            if 'targetFiles' not in json_text:
-                json_text = json_text.replace('"targetfiles"', '"targetFiles"')
-            if 'editType' not in json_text:
-                json_text = json_text.replace('"edittype"', '"editType"')
-            
-            try:
-                llm_plan = json.loads(json_text)
-            except json.JSONDecodeError:
-                print(f"[_llm_analysis] Failed to fix JSON, using fallback")
+            # Fallback: Try to extract just the targetFiles array
+            files_match = re.search(r'"targetFiles":\s*\[(.*?)\]', json_text)
+            if files_match:
+                files_str = files_match.group(1)
+                # Extract file paths from the array
+                file_paths = re.findall(r'"([^"]*\.jsx?)"', files_str)
+                llm_plan = {
+                    "editType": "UPDATE_STYLE",
+                    "targetFiles": file_paths,
+                    "reasoning": "Extracted from malformed JSON",
+                    "confidence": 0.6,
+                    "preserveExisting": True,
+                    "enhanceOnly": False
+                }
+            else:
                 raise json_error
         
-        # Convert relative paths to full paths
+        # CRITICAL: Validate that App.jsx is not included for style changes
+        if llm_plan.get("editType") == "UPDATE_STYLE":
+            target_files_before = llm_plan.get("targetFiles", [])
+            # Remove any App.jsx files from style changes
+            target_files_after = [f for f in target_files_before if 'App.jsx' not in f]
+            if len(target_files_before) != len(target_files_after):
+                print(f"[_llm_analysis] 🚫 Removed App.jsx from style change targets")
+                llm_plan["targetFiles"] = target_files_after
+        
+        # Convert relative paths to full paths and validate App.jsx usage
         target_files = []
         for suggested_file in llm_plan.get("targetFiles", []):
             for comp_info in components.values():
                 if isinstance(comp_info, dict) and suggested_file in comp_info.get('relativePath', ''):
-                    target_files.append(comp_info['path'])
+                    file_path = comp_info['path']
+                    
+                    # CRITICAL: Validate App.jsx usage based on edit type
+                    edit_type = llm_plan.get("editType", "UPDATE_STYLE")
+                    if 'App.jsx' in file_path or file_path.endswith('App.jsx'):
+                        if edit_type == "UPDATE_STYLE":
+                            print(f"[_llm_analysis] 🚫 WARNING: App.jsx included for style change - this may be incorrect")
+                        elif edit_type in ["UPDATE_COMPONENT", "FIX_ISSUE"]:
+                            # Check if this is a text/content change that shouldn't affect App.jsx
+                            if any(word in prompt.lower() for word in ['text', 'content', 'theme', 'style', 'color', 'earthy']):
+                                print(f"[_llm_analysis] 🚫 Excluding App.jsx for content/style change: {file_path}")
+                                continue
+                    
+                    target_files.append(file_path)
                     break
         
         return {
-            'editType': llm_plan.get("editType", "FIX_ISSUE" if is_error else "UPDATE_STYLE"),
+            'editType': llm_plan.get("editType", "UPDATE_STYLE"),
             'targetFiles': target_files,
             'targetSections': llm_plan.get("targetSections", []), 
             'preserveExisting': llm_plan.get("preserveExisting", True),
             'enhanceOnly': llm_plan.get("enhanceOnly", False),
             'confidence': llm_plan.get("confidence", 0.7),
-            'reasoning': llm_plan.get("reasoning", f"LLM analysis for: {prompt}"),
-            'isErrorFix': is_error
+            'reasoning': llm_plan.get("reasoning", f"LLM analysis for: {prompt}")
         }
         
     except Exception as e:
         print(f"[_llm_analysis] Error: {e}")
         # Smart fallback based on prompt content
-        if is_error:
-            # For errors, target the main app and components
-            app_files = [comp['path'] for comp in components.values() 
-                        if isinstance(comp, dict) and comp.get('isMainApp')]
+        if any(word in prompt.lower() for word in ['theme', 'style', 'color', 'earthy', 'design', 'appearance']):
+            # For style changes, only target components, never App.jsx
             component_files = [comp['path'] for comp in components.values() 
-                             if isinstance(comp, dict) and not comp.get('isMainApp')]
-            return {
-                'editType': 'FIX_ISSUE',
-                'targetFiles': app_files + component_files[:2],
-                'targetSections': [],
-                'preserveExisting': True,
-                'enhanceOnly': False,
-                'confidence': 0.5,
-                'reasoning': f"Error fix fallback for: {prompt}",
-                'isErrorFix': True
-            }
+                             if isinstance(comp, dict) and not comp.get('isMainApp') and 'components/' in comp.get('path', '')]
+            target_files = component_files[:3]  # Limit to 3 components
+            edit_type = "UPDATE_STYLE"
+            enhance_only = True
+        elif any(word in prompt.lower() for word in ['text', 'content', 'replace', 'change', 'update']):
+            # For text changes, target components that likely contain text
+            component_files = [comp['path'] for comp in components.values() 
+                             if isinstance(comp, dict) and not comp.get('isMainApp') and 'components/' in comp.get('path', '')]
+            target_files = component_files[:2]  # Limit to 2 components
+            edit_type = "UPDATE_COMPONENT"
+            enhance_only = False
         else:
-            # For regular edits, target components only
-            component_files = [comp['path'] for comp in components.values() 
-                             if isinstance(comp, dict) and not comp.get('isMainApp')]
-            return {
-                'editType': 'UPDATE_STYLE',
-                'targetFiles': component_files[:3],
-                'targetSections': [],
-                'preserveExisting': True,
-                'enhanceOnly': True,
-                'confidence': 0.5,
-                'reasoning': f"LLM fallback for: {prompt}",
-                'isErrorFix': False
-            }
+            # For other changes, can include App.jsx
+            app_files = [comp['path'] for comp in components.values() 
+                         if isinstance(comp, dict) and comp.get('isMainApp')]
+            target_files = app_files[:1]
+            edit_type = "UPDATE_STYLE"
+            enhance_only = True
+        
+        return {
+            'editType': edit_type,
+            'targetFiles': target_files,
+            'targetSections': [],
+            'preserveExisting': True,
+            'enhanceOnly': enhance_only,
+            'confidence': 0.5,
+            'reasoning': f"LLM fallback for: {prompt}"
+        }
 
 def build_edit_context(prompt: str, manifest: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
     """Build comprehensive edit context with error handling"""

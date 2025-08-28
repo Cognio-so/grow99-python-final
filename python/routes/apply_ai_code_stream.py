@@ -50,44 +50,34 @@ conversation_state: Optional[Dict[str, Any]] = None
 # UTF-8 Sanitization Function
 # --------------------------
 def sanitize_content_for_utf8(content: str) -> str:
-    """Enhanced sanitization for JSX content"""
+    """A more powerful sanitizer to remove smart quotes and bad whitespace."""
     if not isinstance(content, str):
         return str(content)
-    
-    # Fix smart quotes - comprehensive mapping
-    smart_quotes = {
-        '\u201c': '"',  # Left double quotation mark
-        '\u201d': '"',  # Right double quotation mark
-        '\u2018': "'",  # Left single quotation mark
-        '\u2019': "'",  # Right single quotation mark
-        '\u2013': '-',  # En dash
-        '\u2014': '--', # Em dash
-        '\u2026': '...', # Horizontal ellipsis
-        '\u00a0': ' ',  # Non-breaking space
-        # Additional problematic characters
-        '\u00b4': "'",  # Acute accent (often mistaken for apostrophe)
-        '\u0060': "'",  # Grave accent
-        '\u00e9': 'e',  # é -> e
-        '\u00e8': 'e', 
-         '“': '"',      # Alternative curly quotes
-        '”': '"',
-        '‘': "'",
-        '’': "'",
-        '—': '--',
-        '…': '...', # è -> e
+
+    # Comprehensive smart quote and special character replacement
+    replacements = {
+        '\u201c': '"', '\u201d': '"',  # “ ” -> "
+        '\u2018': "'", '\u2019': "'",  # ‘ ’ -> '
+        '\u2013': '-', '\u2014': '--', # – —
+        '\u2026': '...',             # …
+        '\u00a0': ' ',               # Non-breaking space
     }
-    
-    for old, new in smart_quotes.items():
+    for old, new in replacements.items():
         content = content.replace(old, new)
+
+    # Fix non-standard indentation by replacing leading unicode spaces with standard spaces
+    cleaned_lines = []
+    for line in content.splitlines():
+        # Find the initial whitespace
+        leading_whitespace = re.match(r'^\s+', line)
+        if leading_whitespace:
+            # Replace with standard spaces of the same length
+            indent = ' ' * len(leading_whitespace.group(0))
+            cleaned_lines.append(indent + line.lstrip())
+        else:
+            cleaned_lines.append(line)
     
-    # Ensure valid UTF-8
-    content = content.encode('utf-8', errors='ignore').decode('utf-8')
-    
-    # Remove any remaining non-printable characters except newlines and tabs
-    import re
-    content = re.sub(r'[^\x20-\x7E\n\t\r]', '', content)
-    
-    return content
+    return '\n'.join(cleaned_lines)
 def sanitize_and_validate_jsx(content: str, file_path: str) -> str:
     """Comprehensive JSX sanitization and validation"""
     
@@ -677,6 +667,22 @@ async def POST(request: Any):
         if JSONResponse is None:
             return error_response
         return JSONResponse(content=error_response, status_code=500)
+
+    # CRITICAL FIX: Remove filtering logic - let LLM handle everything intelligently
+    if is_edit and parsed.get("files"):
+        files_array = parsed.get("files", [])
+        
+        # Just log what the LLM decided, don't filter
+        app_jsx_files = [f for f in files_array if 'App.jsx' in f.get('path', '')]
+        component_files = [f for f in files_array if 'components/' in f.get('path', '')]
+        
+        print(f"[apply-ai-code-stream] ℹ️ LLM selected {len(files_array)} files:")
+        for file_info in files_array:
+            file_name = file_info.get('path', '').split('/')[-1]
+            print(f"[apply-ai-code-stream]   - {file_name}")
+        
+        # Don't filter anything - let the LLM's decision stand
+        parsed['files'] = files_array
 
     # Ensure globals exist
     global existing_files, active_sandbox, sandbox_data, sandbox_state, conversation_state

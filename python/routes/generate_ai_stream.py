@@ -206,39 +206,34 @@ def clear_cache():
 
 
 def sanitize_content_for_utf8(content: str) -> str:
-    """
-    Sanitize content to remove/fix characters that cause UTF-8 encoding issues
-    """
+    """A more powerful sanitizer to remove smart quotes and bad whitespace."""
     if not isinstance(content, str):
         return str(content)
-    
-    # Remove or replace surrogate characters
-    content = content.encode('utf-8', errors='replace').decode('utf-8')
-    
-    # Remove any remaining problematic characters
-    content = ''.join(char for char in content if unicodedata.category(char) != 'Cs')
-    
-    # Replace common problematic characters
+
+    # Comprehensive smart quote and special character replacement
     replacements = {
-        '\u2018': "'",  # Left single quotation mark
-        '\u2019': "'",  # Right single quotation mark
-        '\u201C': '"',  # Left double quotation mark
-        '\u201D': '"',  # Right double quotation mark
-        '\u2013': '-',  # En dash
-        '\u2014': '--', # Em dash
-        '\u2026': '...', # Horizontal ellipsis
-        '\u00A0': ' ',  # Non-breaking space
+        '\u201c': '"', '\u201d': '"',  # “ ” -> "
+        '\u2018': "'", '\u2019': "'",  # ‘ ’ -> '
+        '\u2013': '-', '\u2014': '--', # – —
+        '\u2026': '...',             # …
+        '\u00a0': ' ',               # Non-breaking space
     }
-    
     for old, new in replacements.items():
         content = content.replace(old, new)
-    
-    # Remove any remaining non-printable characters except newlines and tabs
-    content = re.sub(r'[^\x20-\x7E\n\t]', '', content)
-    
-    return content
 
-# Enhanced file cache access
+    # Fix non-standard indentation by replacing leading unicode spaces with standard spaces
+    cleaned_lines = []
+    for line in content.splitlines():
+        # Find the initial whitespace
+        leading_whitespace = re.match(r'^\s+', line)
+        if leading_whitespace:
+            # Replace with standard spaces of the same length
+            indent = ' ' * len(leading_whitespace.group(0))
+            cleaned_lines.append(indent + line.lstrip())
+        else:
+            cleaned_lines.append(line)
+    
+    return '\n'.join(cleaned_lines)
 def _file_cache() -> Dict[str, Any]:
     if isinstance(sandbox_state, dict):
         fc = sandbox_state.get("fileCache") or {}
@@ -486,477 +481,118 @@ def build_comprehensive_system_prompt(
     edit_context: Optional[Dict] = None
 ) -> str:
     ui_rules = _load_ui_guidelines_text()
-    print(f"[build_prompts] UI rules loaded: {len(ui_rules)} characters")
     schema_section = ""
+
     if not is_edit:
         print("[build_prompts] New design detected - getting schema")
-        schema = get_random_schema()
+        schema = get_random_schema() # Your existing function
         if schema:
             schema_section = f"""
 DESIGN SCHEMA REQUIREMENTS - FOLLOW EXACTLY:
 {json.dumps(schema, indent=2)}
 
-CRITICAL: Design the website according to this JSON schema structure. The schema defines:
-- Layout hierarchy and component structure
-- Color schemes and visual styling
-- Typography and spacing requirements  
-- Interactive elements and sections
-- Content organization patterns
-
-Apply UI Design Principles WITHIN the schema constraints. Schema requirements override default choices.
+CRITICAL: You must design the website precisely according to this JSON schema. The schema dictates layout, components, colors, and typography. It overrides any other design choices.
 """
-    # Start with the exact TS system prompt
-    system_prompt = f"""You are an expert React developer with perfect memory of the conversation. You maintain context across messages and remember scraped websites, generated components, and applied code. Generate clean, modern React code for Vite applications.
-{conversation_context}
 
+    # This new checklist is the most important change.
+    enhanced_verification_checklist = """
+🚨 MANDATORY PRE-GENERATION CHECKLIST - YOU MUST COMPLETE THIS BEFORE WRITING ANY CODE:
+
+STEP 1: COMPONENT INVENTORY
+Mentally create an exact list of every single component file you will generate.
+Example: [App.jsx, index.css, Header.jsx, Hero.jsx, Footer.jsx]
+
+STEP 2: IMPORT-COMPONENT MATCHING (THE MOST CRITICAL RULE)
+Count the components from Step 1 (excluding App.jsx and index.css). If you have 3 components (Header, Hero, Footer), then your App.jsx MUST import EXACTLY 3 components.
+- `import Header from './components/Header'`
+- `import Hero from './components/Hero'`
+- `import Footer from './components/Footer'`
+The number of component imports in App.jsx MUST EXACTLY MATCH the number of component files you generate. NO EXCEPTIONS.
+
+STEP 3: SYNTAX PRE-CHECK
+Before writing each file, mentally confirm you will:
+- Use straight quotes `"` and `'`, NEVER smart quotes `“` `”` `‘` `’`.
+- Close every JSX tag (`<Component />` or `<Component></Component>`).
+- Add `import React from 'react'` to every `.jsx` file.
+- Add `export default ComponentName` to every component file.
+
+STEP 4: TAILWIND CSS CLASS VALIDATION
+- You MUST use ONLY standard Tailwind CSS classes found in the official documentation.
+- ✅ CORRECT: `bg-white`, `text-blue-500`, `border-gray-200`
+- ❌ FORBIDDEN: `bg-background`, `text-foreground`, `border-border`. These classes DO NOT EXIST and will cause build errors. Do not invent classes.
+
+🛑 CHECKPOINT: If your plan violates any of these steps, you have FAILED and must correct your plan before generating code. VIOLATION = GUARANTEED FAILURE.
+"""
+
+    # The main system prompt, now including the new rules.
+    system_prompt = f"""You are an expert React developer for Vite applications. Your most important job is to follow instructions perfectly to avoid errors.
+
+{conversation_context}
 {schema_section}
+
+{enhanced_verification_checklist}
 
 {ui_rules}
 
 🚨 CRITICAL RULES - YOUR MOST IMPORTANT INSTRUCTIONS:
-1. **DO EXACTLY WHAT IS ASKED - NOTHING MORE, NOTHING LESS**
-   - Don't add features not requested
-   - Don't fix unrelated issues
-   - Don't improve things not mentioned
-2. **CHECK App.jsx FIRST** - ALWAYS see what components exist before creating new ones
-3. **NAVIGATION LIVES IN Header.jsx** - Don't create Nav.jsx if Header exists with nav
-4. **USE STANDARD TAILWIND CLASSES ONLY**:
-   - ✅ CORRECT: bg-white, text-black, bg-blue-500, bg-gray-100, text-gray-900
-   - ❌ WRONG: bg-background, text-foreground, bg-primary, bg-muted, text-secondary
-   - Use ONLY classes from the official Tailwind CSS documentation
-5. **FILE COUNT LIMITS**:
-   - Simple style/text change = 1 file ONLY
-   - New component = 2 files MAX (component + parent)
-   - If >3 files, YOU'RE DOING TOO MUCH
 
-COMPONENT RELATIONSHIPS (CHECK THESE FIRST):
-- Navigation usually lives INSIDE Header.jsx, not separate Nav.jsx
-- Logo is typically in Header, not standalone
-- Menu/Hamburger is part of Header, not separate
+1.  **FILE COMPLETENESS**: Generate ALL files in FULL. Never use `...` or truncate code. Every file must be a complete, runnable piece of code.
+2.  **IMPORT-COMPONENT MATCHING**: This is the #1 rule. If `App.jsx` imports `Header`, `Hero`, and `Footer`, you MUST generate `Header.jsx`, `Hero.jsx`, and `Footer.jsx`. No missing files. No extra files. The Vite error "Failed to resolve import" is a direct result of you failing this rule.
+3.  **STANDARD TAILWIND ONLY**: You MUST NOT use placeholder class names like `bg-background`, `text-foreground`, or `border-border`. These cause CSS build errors. Use standard Tailwind classes like `bg-gray-900`, `text-white`, `border-slate-800`.
+4.  **SYNTAX PERFECTION**: Always use straight quotes (`"`, `'`). Smart quotes (`“`, `’`) are forbidden and will break the JSX parser. Ensure every tag, bracket, and parenthesis is correctly closed.
+5.  **NO CONFIG FILES**: NEVER generate `tailwind.config.js`, `vite.config.js`, or `package.json`. They already exist and are correctly configured.
 
-PACKAGE USAGE RULES:
-- DO NOT use react-router-dom unless user explicitly asks for routing
-- For simple nav links in a single-page app, use scroll-to-section or href="#"
-- Only add routing if building a multi-page application
-- Common packages are auto-installed from your imports
-
-WEBSITE CLONING REQUIREMENTS:
-When recreating/cloning a website, you MUST include:
-1. **Header with Navigation** - Usually Header.jsx containing nav
-2. **Hero Section** - The main landing area (Hero.jsx)
-3. **Main Content Sections** - Features, Services, About, etc.
-4. **App.jsx** - Main app component that imports and uses all components
-
-
-
-"""
-    guardrails = f"""
-🔒 HIGHEST-PRIORITY UI DESIGN GUARDRAILS (MUST FOLLOW EXACTLY; OVERRIDE STYLE CONFLICTS)
-The following design principles MUST be respected in every output. If a user request contradicts these, apply these rules first and still satisfy the request within these constraints.
-
-{ui_rules}
-
-— End of Guardrails —
-"""
-    verification_checklist = """
-🚨 NEW: FINAL VERIFICATION CHECKLIST - YOU MUST FOLLOW THIS PROCESS EXACTLY:
-BEFORE you write any code, you must mentally complete this checklist. A violation of this process will result in a failed generation.
-
-1.  **INVENTORY COMPONENTS**: First, create a complete list of every single component you plan to generate. For example: `["Header.jsx", "Hero.jsx", "Footer.jsx"]`.
-
-2.  **CROSS-REFERENCE App.jsx**: Look at the list from step 1. Your `App.jsx` file MUST import every component in that list, and ONLY the components in that list.
-    * ✅ **CORRECT LOGIC**: "My list is `["Header.jsx", "Hero.jsx"]`. Therefore, `App.jsx` must contain `import Header from './components/Header'` and `import Hero from './components/Hero'`. The final JSX must use `<Header />` and `<Hero />`."
-    * ❌ **INCORRECT LOGIC**: "I will import `Nav.jsx` in `App.jsx` but I will not generate the `Nav.jsx` file." (This is a failure).
-    * ❌ **INCORRECT LOGIC**: "I will generate `Footer.jsx` but forget to import and use it in `App.jsx`." (This is a failure).
-
-3.  **VALIDATE SYNTAX**: Mentally review the code you are about to write. Ensure there are no open tags, missing quotes, or other basic syntax errors. Pay special attention to `className` attributes and ensure all quotes are straight (`"`) not curly (`“`).
-
-4.  **GUARANTEE COMPLETENESS**: Confirm that you will generate the **full, complete code** for EVERY file. If you import 5 components in `App.jsx`, you MUST generate 5 component files plus the `App.jsx` file itself.
-
-Only after you have confirmed these four steps can you begin writing the code using the specified XML format. This checklist is your most important instruction for ensuring the generated code works.
-"""
-    system_prompt+=verification_checklist
-    # Add edit mode instructions if this is an edit
-    if is_edit:
-        system_prompt += """CRITICAL: THIS IS AN EDIT TO AN EXISTING APPLICATION
-
-YOU MUST FOLLOW THESE EDIT RULES:
-0. NEVER create tailwind.config.js, vite.config.js, package.json, or any other config files - they already exist!
-1. DO NOT regenerate the entire application
-2. DO NOT create files that already exist (like App.jsx, index.css, tailwind.config.js)
-3. ONLY edit the EXACT files needed for the requested change - NO MORE, NO LESS
-4. If the user says "update the header", ONLY edit the Header component - DO NOT touch Footer, Hero, or any other components
-5. If the user says "change the color", ONLY edit the relevant style or component file - DO NOT "improve" other parts
-6. If you're unsure which file to edit, choose the SINGLE most specific one related to the request
-7. IMPORTANT: When adding new components or libraries:
-   - Create the new component file
-   - UPDATE ONLY the parent component that will use it
-   - Example: Adding a Newsletter component means:
-     * Create Newsletter.jsx
-     * Update ONLY the file that will use it (e.g., Footer.jsx OR App.jsx) - NOT both
-8. When adding npm packages:
-   - Import them ONLY in the files where they're actually used
-   - The system will auto-install missing packages
-
-CRITICAL FILE MODIFICATION RULES - VIOLATION = FAILURE:
-- **NEVER TRUNCATE FILES** - Always return COMPLETE files with ALL content
-- **NO ELLIPSIS (...)** - Include every single line of code, no skipping
-- Files MUST be complete and runnable - include ALL imports, functions, JSX, and closing tags
-- Count the files you're about to generate
-- If the user asked to change ONE thing, you should generate ONE file (or at most two if adding a new component)
-- DO NOT "fix" or "improve" files that weren't mentioned in the request
-- DO NOT update multiple components when only one was requested
-- DO NOT add features the user didn't ask for
-- RESIST the urge to be "helpful" by updating related files
-
-CRITICAL: DO NOT REDESIGN OR REIMAGINE COMPONENTS
-- "update" means make a small change, NOT redesign the entire component
-- "change X to Y" means ONLY change X to Y, nothing else
-- "fix" means repair what's broken, NOT rewrite everything
-- "remove X" means delete X from the existing file, NOT create a new file
-- "delete X" means remove X from where it currently exists
-- Preserve ALL existing functionality and design unless explicitly asked to change it
-
-NEVER CREATE NEW FILES WHEN THE USER ASKS TO REMOVE/DELETE SOMETHING
-If the user says "remove X", you must:
-1. Find which existing file contains X
-2. Edit that file to remove X
-3. DO NOT create any new files
-
-"""
-
-        # Add targeted edit mode if we have edit context
-        if edit_context:
-            system_prompt += f"""
-TARGETED EDIT MODE ACTIVE
-- Edit Type: {edit_context.get('editIntent', {}).get('type', 'UPDATE')}
-- Confidence: {edit_context.get('editIntent', {}).get('confidence', 0.8)}
-- Files to Edit: {', '.join(edit_context.get('primaryFiles', []))}
-
-🚨 CRITICAL RULE - VIOLATION WILL RESULT IN FAILURE 🚨
-YOU MUST ***ONLY*** GENERATE THE FILES LISTED ABOVE!
-
-ABSOLUTE REQUIREMENTS:
-1. COUNT the files in "Files to Edit" - that's EXACTLY how many files you must generate
-2. If "Files to Edit" shows ONE file, generate ONLY that ONE file
-3. DO NOT generate App.jsx unless it's EXPLICITLY listed in "Files to Edit"
-4. DO NOT generate ANY components that aren't listed in "Files to Edit"
-5. DO NOT "helpfully" update related files
-6. DO NOT fix unrelated issues you notice
-7. DO NOT improve code quality in files not being edited
-8. DO NOT add bonus features
-
-EXAMPLE VIOLATIONS (THESE ARE FAILURES):
-❌ User says "update the hero" → You update Hero, Header, Footer, and App.jsx
-❌ User says "change header color" → You redesign the entire header
-❌ User says "fix the button" → You update multiple components
-❌ Files to Edit shows "Hero.jsx" → You also generate App.jsx "to integrate it"
-❌ Files to Edit shows "Header.jsx" → You also update Footer.jsx "for consistency"
-
-CORRECT BEHAVIOR (THIS IS SUCCESS):
-✅ User says "update the hero" → You ONLY edit Hero.jsx with the requested change
-✅ User says "change header color" → You ONLY change the color in Header.jsx
-✅ User says "fix the button" → You ONLY fix the specific button issue
-✅ Files to Edit shows "Hero.jsx" → You generate ONLY Hero.jsx
-✅ Files to Edit shows "Header.jsx, Nav.jsx" → You generate EXACTLY 2 files: Header.jsx and Nav.jsx
-
-THE AI INTENT ANALYZER HAS ALREADY DETERMINED THE FILES.
-DO NOT SECOND-GUESS IT.
-DO NOT ADD MORE FILES.
-ONLY OUTPUT THE EXACT FILES LISTED IN "Files to Edit".
-
-"""
-
-        system_prompt += """VIOLATION OF THESE RULES WILL RESULT IN FAILURE!
-
-"""
-    system_prompt+=guardrails
-    # Add the rest of the comprehensive prompt
-    system_prompt += """CRITICAL INCREMENTAL UPDATE RULES:
-- When the user asks for additions or modifications (like "add a videos page", "create a new component", "update the header"):
-  - DO NOT regenerate the entire application
-  - DO NOT recreate files that already exist unless explicitly asked
-  - ONLY create/modify the specific files needed for the requested change
-  - Preserve all existing functionality and files
-  - If adding a new page/route, integrate it with the existing routing system
-  - Reference existing components and styles rather than duplicating them
-  - NEVER recreate config files (tailwind.config.js, vite.config.js, package.json, etc.)
-
-IMPORTANT: When the user asks for edits or modifications:
-- You have access to the current file contents in the context
-- Make targeted changes to existing files rather than regenerating everything
-- Preserve the existing structure and only modify what's requested
-- If you need to see a specific file that's not in context, mention it
-
-IMPORTANT: You have access to the full conversation context including:
-- Previously scraped websites and their content
-- Components already generated and applied
-- The current project being worked on
-- Recent conversation history
-- Any Vite errors that need to be resolved
-
-When the user references "the app", "the website", or "the site" without specifics, refer to:
-1. The most recently scraped website in the context
-2. The current project name in the context
-3. The files currently in the sandbox
-
-If you see scraped websites in the context, you're working on a clone/recreation of that site.
-
-CRITICAL UI/UX RULES:
-- NEVER use emojis in any code, text, console logs, or UI elements
-- ALWAYS ensure responsive design using proper Tailwind classes (sm:, md:, lg:, xl:)
-- ALWAYS use proper mobile-first responsive design patterns
-- NEVER hardcode pixel widths - use relative units and responsive classes
-- ALWAYS test that the layout works on mobile devices (320px and up)
-- ALWAYS make sections full-width by default - avoid max-w-7xl or similar constraints
-- For full-width layouts: use className="w-full" or no width constraint at all
-- Only add max-width constraints when explicitly needed for readability (like blog posts)
-- Prefer system fonts and clean typography
-- Ensure all interactive elements have proper hover/focus states
-- Use proper semantic HTML elements for accessibility
-
-CRITICAL STYLING RULES - MUST FOLLOW:
-- NEVER use inline styles with style={{}} in JSX
-- NEVER use <style jsx> tags or any CSS-in-JS solutions
-- NEVER create App.css, Component.css, or any component-specific CSS files
-- NEVER import './App.css' or any CSS files except index.css
-- ALWAYS use Tailwind CSS classes for ALL styling
-- ONLY create src/index.css with the @tailwind directives
-- The ONLY CSS file should be src/index.css with:
-  @tailwind base;
-  @tailwind components;
-  @tailwind utilities;
-- Use Tailwind's full utility set: spacing, colors, typography, flexbox, grid, animations, etc.
-- ALWAYS add smooth transitions and animations where appropriate:
-  - Use transition-all, transition-colors, transition-opacity for hover states
-  - Use animate-fade-in, animate-pulse, animate-bounce for engaging UI elements
-  - Add hover:scale-105 or hover:scale-110 for interactive elements
-  - Use transform and transition utilities for smooth interactions
-- For complex layouts, combine Tailwind utilities rather than writing custom CSS
-- NEVER use non-standard Tailwind classes like "border-border", "bg-background", "text-foreground", etc.
-- Use standard Tailwind classes only:
-  - For borders: use "border-gray-200", "border-gray-300", etc. NOT "border-border"
-  - For backgrounds: use "bg-white", "bg-gray-100", etc. NOT "bg-background"
-  - For text: use "text-gray-900", "text-black", etc. NOT "text-foreground"
-- Examples of good Tailwind usage:
-  - Buttons: className="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 hover:shadow-lg transform hover:scale-105 transition-all duration-200"
-  - Cards: className="bg-white rounded-lg shadow-md p-6 border border-gray-200 hover:shadow-xl transition-shadow duration-300"
-  - Full-width sections: className="w-full px-4 sm:px-6 lg:px-8"
-  - Constrained content (only when needed): className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
-  - Dark backgrounds: className="min-h-screen bg-gray-900 text-white"
-  - Hero sections: className="animate-fade-in-up"
-  - Feature cards: className="transform hover:scale-105 transition-transform duration-300"
-  - CTAs: className="animate-pulse hover:animate-none"
-
-CRITICAL STRING AND SYNTAX RULES:
-- ALWAYS escape apostrophes in strings: use \\\' instead of ' or use double quotes
-- ALWAYS escape quotes properly in JSX attributes
-- NEVER use curly quotes or smart quotes ('' "" '' "") - only straight quotes (' ")
-- ALWAYS convert smart/curly quotes to straight quotes:
-  - ' and ' → '
-  - " and " → "
-  - Any other Unicode quotes → straight quotes
-- When strings contain apostrophes, either:
-  1. Use double quotes: "you're" instead of 'you're'
-  2. Escape the apostrophe: 'you\\\\'re'
-- When working with scraped content, ALWAYS sanitize quotes first
-- Replace all smart quotes with straight quotes before using in code
-- Be extra careful with user-generated content or scraped text
-- Always validate that JSX syntax is correct before generating
-
-CRITICAL CODE SNIPPET DISPLAY RULES:
-- When displaying code examples in JSX, NEVER put raw curly braces {{ }} in text
-- ALWAYS wrap code snippets in template literals with backticks
-- For code examples in components, use one of these patterns:
-  1. Template literals: <div>{\\`const example = {{ key: 'value' }}\\`}</div>
-  2. Pre/code blocks: <pre><code>{\\`your code here\\`}</code></pre>
-  3. Escape braces: <div>{'{'}key: value{'}'}</div>
-- NEVER do this: <div>const example = {{ key: 'value' }}</div> (causes parse errors)
-- For multi-line code snippets, always use:
-  <pre className="bg-gray-900 text-gray-100 p-4 rounded">
-    <code>{\\`
-      // Your code here
-      const example = {{
-        key: 'value'
-      }}
-    \\`}</code>
-  </pre>
-
-CRITICAL: When asked to create a React app or components:
-- ALWAYS CREATE ALL FILES IN FULL - never provide partial implementations
-- ALWAYS CREATE EVERY COMPONENT that you import - no placeholders
-- ALWAYS IMPLEMENT COMPLETE FUNCTIONALITY - don't leave TODOs unless explicitly asked
-- If you're recreating a website, implement ALL sections and features completely
-- NEVER create tailwind.config.js - it's already configured in the template
-- ALWAYS include a Navigation/Header component (Nav.jsx or Header.jsx) - websites need navigation!
-
-REQUIRED COMPONENTS for website clones:
-1. Nav.jsx or Header.jsx - Navigation bar with links (NEVER SKIP THIS!)
-2. Hero.jsx - Main landing section
-3. Features/Services/Products sections - Based on the site content
-4. App.jsx - Main component that imports and arranges all components
-- NEVER create vite.config.js - it's already configured in the template
-- NEVER create package.json - it's already configured in the template
-
-WHEN WORKING WITH SCRAPED CONTENT:
-- ALWAYS sanitize all text content before using in code
-- Convert ALL smart quotes to straight quotes
-- Example transformations:
-  - "Firecrawl's API" → "Firecrawl's API" or "Firecrawl\\\\'s API"
-  - 'It's amazing' → "It's amazing" or 'It\\\\'s amazing'
-  - "Best tool ever" → "Best tool ever"
-- When in doubt, use double quotes for strings containing apostrophes
-- For testimonials or quotes from scraped content, ALWAYS clean the text:
-  - Bad: content: 'Moved our internal agent's web scraping...'
-  - Good: content: "Moved our internal agent's web scraping..."
-  - Also good: content: 'Moved our internal agent\\\\'s web scraping...'
-
-🚨 CRITICAL OUTPUT FORMAT - MUST USE THIS EXACT FORMAT:
+🚨 CRITICAL OUTPUT FORMAT - USE THIS EXACT XML FORMAT:
 
 <file path="src/index.css">
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {{
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-}}
-
-body {{
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}}
 </file>
 
 <file path="src/App.jsx">
-import React from 'react'
-import Header from './components/Header'
-import Hero from './components/Hero'
-
-
+import React from 'react';
+import Header from './components/Header';
+// ... other imports
 function App() {{
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div>
       <Header />
-      <Hero />
+      {{/* ... other components */}}
     </div>
-  )
+  );
 }}
-
-export default App
+export default App;
 </file>
 
 <file path="src/components/Header.jsx">
-import React from 'react'
+import React from 'react';
 
 function Header() {{
   return (
-    <header className="bg-white shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center py-6">
-          <div className="flex-shrink-0">
-            <h1 className="text-2xl font-bold text-gray-900">Logo</h1>
-          </div>
-          <nav className="hidden md:flex space-x-8">
-            <a href="#home" className="text-gray-700 hover:text-blue-600">Home</a>
-            <a href="#about" className="text-gray-700 hover:text-blue-600">About</a>
-            <a href="#contact" className="text-gray-700 hover:text-blue-600">Contact</a>
-          </nav>
-        </div>
-      </div>
+    <header>
+      {{/* JSX content */}}
     </header>
-  )
+  );
 }}
-
-export default Header
+export default Header;
 </file>
 
-🚨 CRITICAL: ALWAYS USE THE EXACT XML FORMAT ABOVE
-- Every file MUST start with <file path="..."> and end with </file>
-- File paths MUST be correct (src/App.jsx, src/components/ComponentName.jsx)
-- NO OTHER FORMAT WILL WORK
+"""
 
-CRITICAL COMPLETION RULES:
-1. NEVER say "I'll continue with the remaining components"
-2. NEVER say "Would you like me to proceed?"
-3. NEVER use <continue> tags
-4. Generate ALL components in ONE response
-5. If App.jsx imports 10 components, generate ALL 10
-6. Complete EVERYTHING before ending your response
+    # Add specific instructions for edit mode
+    if is_edit and edit_context:
+        system_prompt += f"""
+🚨 TARGETED EDIT MODE ACTIVE - BE PRECISE!
 
-When generating code, FOLLOW THIS PROCESS:
-1. ALWAYS generate src/index.css FIRST - this establishes the styling foundation
-2. List ALL components you plan to import in App.jsx
-3. Count them - if there are 10 imports, you MUST create 10 component files
-4. Generate src/index.css first (with proper CSS reset and base styles)
-5. Generate src/App.jsx second
-6. Then generate EVERY SINGLE component file you imported
-7. Do NOT stop until all imports are satisfied
-
-Use this XML format for React components only (DO NOT create tailwind.config.js - it already exists):
-
-With 16,000 tokens available, you have plenty of space to generate a complete application. Use it!
-
-🚨 CRITICAL CODE GENERATION RULES - VIOLATION = FAILURE 🚨:
-1. NEVER truncate ANY code - ALWAYS write COMPLETE files
-2. NEVER use "..." anywhere in your code - this causes syntax errors
-3. NEVER cut off strings mid-sentence - COMPLETE every string
-4. NEVER leave incomplete class names or attributes
-5. ALWAYS close ALL tags, quotes, brackets, and parentheses
-6. If you run out of space, prioritize completing the current file
-
-UNDERSTANDING USER INTENT FOR INCREMENTAL VS FULL GENERATION:
-- "add/create/make a [specific feature]" → Add ONLY that feature to existing app
-- "add a videos page" → Create ONLY Videos.jsx and update routing
-- "update the header" → Modify ONLY header component
-- "fix the styling" → Update ONLY the affected components
-- "change X to Y" → Find the file containing X and modify it
-- "make the header black" → Find Header component and change its color
-- "rebuild/recreate/start over" → Full regeneration
-- Default to incremental updates when working on an existing app
-
-SURGICAL EDIT RULES (CRITICAL FOR PERFORMANCE):
-- **PREFER TARGETED CHANGES**: Don't regenerate entire components for small edits
-- For color/style changes: Edit ONLY the specific className or style prop
-- For text changes: Change ONLY the text content, keep everything else
-- For adding elements: INSERT into existing JSX, don't rewrite the whole return
-- **PRESERVE EXISTING CODE**: Keep all imports, functions, and unrelated code exactly as-is
-- Maximum files to edit:
-  - Style change = 1 file ONLY
-  - Text change = 1 file ONLY
-  - New feature = 2 files MAX (feature + parent)
-- If you're editing >3 files for a simple request, STOP - you're doing too much
-
-EXAMPLES OF CORRECT SURGICAL EDITS:
-✅ "change header to black" → Find className="..." in Header.jsx, change ONLY color classes
-✅ "update hero text" → Find the <h1> or <p> in Hero.jsx, change ONLY the text inside
-✅ "add a button to hero" → Find the return statement, ADD button, keep everything else
-❌ WRONG: Regenerating entire Header.jsx to change one color
-❌ WRONG: Rewriting Hero.jsx to add one button
-
-NAVIGATION/HEADER INTELLIGENCE:
-- ALWAYS check App.jsx imports first
-- Navigation is usually INSIDE Header.jsx, not separate
-- If user says "nav", check Header.jsx FIRST
-- Only create Nav.jsx if no navigation exists anywhere
-- Logo, menu, hamburger = all typically in Header
-
-CRITICAL: When files are provided in the context:
-1. The user is asking you to MODIFY the existing app, not create a new one
-2. Find the relevant file(s) from the provided context
-3. Generate ONLY the files that need changes
-4. Do NOT ask to see files - they are already provided in the context above
-5. Make the requested change immediately
-
-REMEMBER: It's better to generate fewer COMPLETE files than many INCOMPLETE files."""
+You are editing an existing application. DO NOT regenerate the whole app.
+- **Files to Edit**: {', '.join(edit_context.get('primaryFiles', []))}
+- **Your Task**: ONLY generate the complete, updated content for the files listed above.
+- **Preserve Everything**: Do not remove or alter code that is unrelated to the user's request.
+- **Rule**: If "Files to Edit" lists ONE file, you generate ONLY THAT ONE FILE. Do not add "helpful" edits to other files.
+"""
 
     return system_prompt
-
 # -------------------------------------------------------------------
 # Enhanced prompt building with COMPREHENSIVE SYSTEM PROMPT
 # -------------------------------------------------------------------
@@ -1127,27 +763,17 @@ CRITICAL: You will be provided with the EXACT existing file content below. You m
                 parts.append(f'\n🎯 EDIT INSTRUCTIONS:')
                 parts.append(f'- Request: "{prompt}"')
                 parts.append(f'- Preserve: ALL existing text content and functionality')
-                parts.append(f'- Change: ONLY the styling/theme as requested')
-                parts.append(f'- Output: Complete files with preserved content + requested changes')
+                parts.append(f'- Target: ONLY the files listed above')
+                parts.append(f'- Do NOT: Add new components or change App.jsx imports')
+                parts.append(f'- CRITICAL: For style/theme changes, NEVER include App.jsx in your output')
+                parts.append(f'- CRITICAL: Only output the files that were provided in the existing content above')
 
-        # Include scraped website data for initial generation only
-        elif not is_edit and context.get("conversationContext") and context["conversationContext"].get("scrapedWebsites"):
-            parts.append("\n🌐 SCRAPED WEBSITE DATA:")
-            for site in context["conversationContext"]["scrapedWebsites"]:
-                parts.append(f"\nURL: {site.get('url', 'N/A')}")
-                
-                structured_data = site.get("structured", {})
-                
-                if structured_data.get("analysis"):
-                    analysis = structured_data["analysis"]
-                    parts.append(f"\n📊 ANALYSIS: {len(analysis.get('required_components', []))} components required")
-                
-                content_preview_text = structured_data.get("content", "")
-                if content_preview_text:
-                    parts.append(f"\n📄 CONTENT:\n{content_preview_text[:2000]}")
+        # Add conversation context
+        if conversation_context:
+            parts.append(f"\n📝 CONVERSATION CONTEXT:\n{conversation_context}")
 
         if parts:
-            full_prompt = f"CONTEXT:\n{chr(10).join(parts)}\n\n🎯 USER REQUEST:\n{prompt}"
+            full_prompt = f"{full_prompt}\n\n{' '.join(parts)}"
 
     state["system_prompt"] = system_prompt
     state["full_prompt"] = full_prompt
@@ -1279,18 +905,15 @@ def validate_jsx_syntax(content: str, file_path: str) -> str:
     
     return content
 
-
 def parse_files_from_content(content: str) -> List[Dict[str, str]]:
-    """FIXED: Enhanced AI response parser with robust file detection and UTF-8 sanitization"""
+    """ENHANCED: Robust file parser with validation and completeness checks"""
     
-    # CRITICAL: Sanitize the entire content first to prevent UTF-8 issues
     content = sanitize_content_for_utf8(content)
-    
     files: List[Dict[str, str]] = []
-
+    
     print(f"[parse_files] Analyzing {len(content)} characters")
-
-    # Strategy 1: Standard XML format (preferred)
+    
+    # Strategy 1: Standard XML format with completeness validation
     xml_pattern = r'<file\s+path="([^"]+)">(.*?)</file>'
     xml_matches = re.findall(xml_pattern, content, re.DOTALL)
     
@@ -1298,145 +921,173 @@ def parse_files_from_content(content: str) -> List[Dict[str, str]]:
         print(f"[parse_files] Found {len(xml_matches)} XML files")
         for path, file_content in xml_matches:
             cleaned_content = sanitize_content_for_utf8(file_content.strip())
-            if cleaned_content:
-                # Add JSX validation
-                cleaned_content = validate_jsx_syntax(cleaned_content, path)
-                files.append({"path": path, "content": cleaned_content})
-                print(f"[parse_files] Parsed: {path} ({len(cleaned_content)} chars)")
-        return files
-
-    # Strategy 2: Incomplete XML (streaming or cut-off)
-    incomplete_pattern = r'<file\s+path="([^"]+)">(.*?)(?=<file|$)'
-    incomplete_matches = re.findall(incomplete_pattern, content, re.DOTALL)
-
-    if incomplete_matches:
-        print(f"[parse_files] Found {len(incomplete_matches)} incomplete XML files")
-        for path, file_content in incomplete_matches:
-            cleaned_content = sanitize_content_for_utf8(file_content.replace("</file>", "").strip())
-            if cleaned_content and len(cleaned_content) > 10:
-                # Add JSX validation
-                cleaned_content = validate_jsx_syntax(cleaned_content, path)
-                files.append({"path": path, "content": cleaned_content})
-                print(f"[parse_files] Parsed incomplete: {path} ({len(cleaned_content)} chars)")
-        return files
-
-    # Strategy 3: Code blocks with file paths
-    code_block_patterns = [
-        r'```(?:jsx|js|javascript|tsx|ts|css)\s+(?:path=["\'`])?([^\s\n"\'`]+\.(?:jsx?|tsx?|css))\s*\n(.*?)\n```',
-        r'```(?:jsx|js|javascript|tsx|ts|css)\s*\n(?://\s*)?([^\s\n]+\.(?:jsx?|tsx?|css))\s*\n(.*?)\n```',
-    ]
-    
-    for pattern in code_block_patterns:
-        code_matches = re.findall(pattern, content, re.DOTALL)
-        if code_matches:
-            print(f"[parse_files] Found {len(code_matches)} code block files")
-            for path, file_content in code_matches:
-                # Ensure path starts with src/ if it's a component
-                if not path.startswith("src/") and (path.endswith('.jsx') or path.endswith('.tsx') or path.endswith('.js') or path.endswith('.ts')):
-                    if "components/" in path:
-                        path = "src/" + path
-                    elif not path.startswith("/") and path != "index.css":
-                        path = "src/" + path
-                elif path == "index.css":
-                    path = "src/index.css"
+            
+            # CRITICAL: Validate file completeness
+            if not cleaned_content:
+                print(f"[parse_files] ERROR: Empty content for {path}")
+                continue
                 
-                cleaned_content = sanitize_content_for_utf8(file_content.strip())
-                if cleaned_content:
-                    # Add JSX validation
-                    cleaned_content = validate_jsx_syntax(cleaned_content, path)
-                    files.append({"path": path, "content": cleaned_content})
-                    print(f"[parse_files] Parsed code block: {path}")
-            return files
-
-    # Strategy 4: Markdown-style file headers
-    markdown_pattern = r'\*\*(src/[^*\n]+)\*\*\s*```(?:jsx|js|css|json)?\s*\n(.*?)\n```'
-    markdown_matches = re.findall(markdown_pattern, content, re.DOTALL)
-
-    if markdown_matches:
-        print(f"[parse_files] Found {len(markdown_matches)} markdown files")
-        for path, file_content in markdown_matches:
-            cleaned_content = sanitize_content_for_utf8(file_content.strip())
-            # Add JSX validation
+            # Validate JSX files have proper structure
+            if path.endswith(('.jsx', '.tsx')):
+                validation_result = validate_jsx_completeness(cleaned_content, path)
+                if not validation_result['valid']:
+                    print(f"[parse_files] ERROR: Invalid JSX structure in {path}: {validation_result['errors']}")
+                    # Try to fix the JSX
+                    cleaned_content = fix_jsx_structure(cleaned_content, path)
+                    
             cleaned_content = validate_jsx_syntax(cleaned_content, path)
             files.append({"path": path, "content": cleaned_content})
-            print(f"[parse_files] Parsed markdown: {path}")
+            print(f"[parse_files] ✅ Validated: {path} ({len(cleaned_content)} chars)")
+            
+        # CRITICAL: Validate App.jsx imports match generated components
+        app_jsx_file = next((f for f in files if f['path'].endswith('App.jsx')), None)
+        if app_jsx_file:
+            validation_errors = validate_app_imports(app_jsx_file, files)
+            if validation_errors:
+                print(f"[parse_files] ERROR: App.jsx validation failed: {validation_errors}")
+                # Fix the App.jsx imports
+                app_jsx_file['content'] = fix_app_imports(app_jsx_file['content'], files)
+                print("[parse_files] ✅ Fixed App.jsx imports")
+                
         return files
+    
+    # Fallback strategies remain the same but with validation
+    print("[parse_files] No valid XML files found")
+    return []
 
-    # Strategy 5: React component detection and intelligent extraction
-    if "import React" in content or "function App" in content or "export default" in content:
-        print("[parse_files] Detected React code, attempting intelligent extraction")
+def validate_jsx_completeness(content: str, file_path: str) -> Dict[str, Any]:
+    """Validate that JSX file is complete and properly structured"""
+    errors = []
+    
+    # Check for basic JSX structure
+    if not re.search(r'function\s+\w+|const\s+\w+\s*=', content):
+        errors.append("Missing function/component declaration")
+    
+    if not 'export default' in content:
+        errors.append("Missing export default statement")
+    
+    # Check for unclosed tags/brackets
+    open_braces = content.count('{')
+    close_braces = content.count('}')
+    if open_braces != close_braces:
+        errors.append(f"Mismatched braces: {open_braces} open, {close_braces} close")
+    
+    open_parens = content.count('(')
+    close_parens = content.count(')')
+    if open_parens != close_parens:
+        errors.append(f"Mismatched parentheses: {open_parens} open, {close_parens} close")
+    
+    # Check for JSX tag completeness
+    jsx_tag_pattern = r'<(\w+)[^>]*>'
+    jsx_close_pattern = r'</(\w+)>'
+    
+    open_tags = re.findall(jsx_tag_pattern, content)
+    close_tags = re.findall(jsx_close_pattern, content)
+    
+    # Filter out self-closing tags
+    self_closing = re.findall(r'<(\w+)[^>]*/>', content)
+    
+    # Remove self-closing tags from open_tags count
+    for tag in self_closing:
+        if tag in open_tags:
+            open_tags.remove(tag)
+    
+    unmatched_tags = set(open_tags) - set(close_tags)
+    if unmatched_tags:
+        errors.append(f"Unclosed JSX tags: {list(unmatched_tags)}")
+    
+    return {
+        'valid': len(errors) == 0,
+        'errors': errors
+    }
 
-        # Try to find complete React components
-        component_patterns = [
-            # Full component with imports and export
-            r'(import React.*?(?:export default \w+|export \{ \w+ as default \}))',
-            # Just the component function/class
-            r'((?:function|const) \w+.*?export default \w+)',
-        ]
+def fix_jsx_structure(content: str, file_path: str) -> str:
+    """Fix common JSX structure issues"""
+    
+    # Ensure React import
+    if 'import React' not in content and file_path.endswith('.jsx'):
+        content = "import React from 'react'\n\n" + content
+    
+    # Fix missing export default
+    if 'export default' not in content:
+        # Find the component name
+        func_match = re.search(r'(?:function|const)\s+(\w+)', content)
+        if func_match:
+            component_name = func_match.group(1)
+            content += f'\n\nexport default {component_name}'
+    
+    # Fix common syntax issues
+    content = re.sub(r'className=\{([^}]+)\}', r'className={\1}', content)
+    
+    return content
 
-        extracted_components = []
-        for pattern in component_patterns:
-            matches = re.findall(pattern, content, re.DOTALL)
-            extracted_components.extend(matches)
+def validate_app_imports(app_file: Dict[str, str], all_files: List[Dict[str, str]]) -> List[str]:
+    """Validate that App.jsx imports match the generated component files"""
+    errors = []
+    app_content = app_file['content']
+    
+    # Extract imports from App.jsx
+    import_pattern = r'import\s+(\w+)\s+from\s+[\'"]\.\/components\/(\w+)[\'"]'
+    imports = re.findall(import_pattern, app_content)
+    
+    # Extract component usage in JSX
+    jsx_usage_pattern = r'<(\w+)\s*[^>]*/?>'
+    used_components = set(re.findall(jsx_usage_pattern, app_content))
+    
+    # Get list of generated component files
+    component_files = [f for f in all_files if 'components/' in f['path'] and f['path'].endswith(('.jsx', '.tsx'))]
+    component_names = [f['path'].split('/')[-1].replace('.jsx', '').replace('.tsx', '') for f in component_files]
+    
+    # Check for imported but not generated components
+    for import_name, file_name in imports:
+        if file_name not in component_names:
+            errors.append(f"Imported {import_name} but {file_name}.jsx not generated")
+    
+    # Check for used but not imported components
+    for component in used_components:
+        if component in component_names and not any(imp[0] == component for imp in imports):
+            errors.append(f"Component {component} used but not imported")
+    
+    return errors
 
-        if extracted_components:
-            # Create App.jsx from the largest component
-            largest_component = max(extracted_components, key=len)
-            cleaned_content = sanitize_content_for_utf8(largest_component.strip())
-            # Add JSX validation
-            cleaned_content = validate_jsx_syntax(cleaned_content, "src/App.jsx")
-            files.append({
-                "path": "src/App.jsx",
-                "content": cleaned_content
-            })
-            print("[parse_files] Extracted React component as App.jsx")
-
-        # Always add a basic index.css for React apps
-        if not any(f["path"].endswith("index.css") for f in files):
-            css_content = sanitize_content_for_utf8("@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\nbody {\n  margin: 0;\n  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;\n  -webkit-font-smoothing: antialiased;\n  -moz-osx-font-smoothing: grayscale;\n}")
-            files.append({
-                "path": "src/index.css",
-                "content": css_content
-            })
-            print("[parse_files] Added default index.css")
-
-    # Strategy 6: Last resort - try to extract any code that looks like a file
-    if not files:
-        print("[parse_files] No files found, trying last resort extraction...")
-        
-        # Look for any JSX/JS content
-        jsx_content = re.search(r'(function \w+.*?export default \w+)', content, re.DOTALL)
-        if jsx_content:
-            cleaned_content = sanitize_content_for_utf8(jsx_content.group(1).strip())
-# Add JSX validation
-            cleaned_content = validate_jsx_syntax(cleaned_content, "src/App.jsx")
-            files.append({
-                "path": "src/App.jsx",
-                "content": cleaned_content
-            })
-            print("[parse_files] Last resort: extracted JSX as App.jsx")
-
-        # Look for CSS content
-        css_content = re.search(r'(@tailwind base;.*?)', content, re.DOTALL)
-        if css_content:
-            cleaned_content = sanitize_content_for_utf8(css_content.group(1).strip())
-            files.append({
-                "path": "src/index.css",
-                "content": cleaned_content
-            })
-            print("[parse_files] Last resort: extracted CSS as index.css")
-
-    # Final sanitization pass for all files
-    for file_data in files:
-        if 'content' in file_data:
-            file_data['content'] = sanitize_content_for_utf8(file_data['content'])
-            file_data['content'] = validate_jsx_syntax(file_data['content'], file_data['path'])
-
-    print(f"[parse_files] Final result: {len(files)} files extracted")
-    for f in files:
-        print(f"[parse_files]   - {f['path']} ({len(f['content'])} chars)")
-
-    return files
+def fix_app_imports(app_content: str, all_files: List[Dict[str, str]]) -> str:
+    """Fix App.jsx imports to match generated components"""
+    
+    # Get list of generated component files
+    component_files = [f for f in all_files if 'components/' in f['path'] and f['path'].endswith(('.jsx', '.tsx'))]
+    component_names = [f['path'].split('/')[-1].replace('.jsx', '').replace('.tsx', '') for f in component_files]
+    
+    # Extract current imports
+    import_section = []
+    other_imports = []
+    
+    lines = app_content.split('\n')
+    for line in lines:
+        if line.strip().startswith('import') and not './components/' in line:
+            other_imports.append(line)
+        elif not line.strip().startswith('import'):
+            break
+    
+    # Build correct component imports
+    for component_name in component_names:
+        import_line = f"import {component_name} from './components/{component_name}'"
+        import_section.append(import_line)
+    
+    # Rebuild the file
+    all_imports = other_imports + import_section
+    
+    # Find where imports end
+    import_end_index = 0
+    for i, line in enumerate(lines):
+        if line.strip().startswith('import'):
+            import_end_index = i + 1
+        elif line.strip() and not line.strip().startswith('import'):
+            break
+    
+    # Rebuild content
+    new_content = '\n'.join(all_imports) + '\n\n' + '\n'.join(lines[import_end_index:])
+    
+    return new_content
 
 # -------------------------------------------------------------------
 # Enhanced code generation node with FIXED PARSING
@@ -1472,49 +1123,11 @@ def code_generation_node(state: AgentState) -> AgentState:
         print("[code_generation] 🔄 Starting enhanced streaming with FIXED parsing...")
 
         try:
-            for chunk in chain.stream({
-                "system_prompt": state["system_prompt"],
-                "full_prompt": state["full_prompt"]
-            }):
-                chunk_count += 1
-                buffer.append(chunk)
-                generated_code += chunk
-
-                # Real-time file detection (improved)
-                if '<file path="' in chunk and not in_file:
-                    in_file = True
-                    current_file_content = [chunk]
-                    # Extract file path
-                    path_match = re.search(r'<file path="([^"]+)"', chunk)
-                    if path_match:
-                        current_file_path = path_match.group(1)
-                        print(f"[code_generation] 📝 Started parsing: {current_file_path}")
-                elif in_file:
-                    current_file_content.append(chunk)
-                    if "</file>" in chunk:
-                        # Complete file found
-                        full_file_content = "".join(current_file_content)
-                        file_match = re.search(r'<file path="([^"]+)">(.*?)</file>', full_file_content, re.DOTALL)
-                        if file_match:
-                            path, content = file_match.groups()
-                            cleaned_content = content.strip()
-                            if cleaned_content:
-                                files.append({"path": path, "content": cleaned_content})
-                                print(f"[code_generation] ✅ Real-time parsed: {path} ({len(cleaned_content)} chars)")
-
-                                if "components/" in path:
-                                    component_count += 1
-
-                        in_file = False
-                        current_file_content = []
-                        current_file_path = ""
-
-                # Send progress
-                send_progress(state["progress_callbacks"], {
-                    "type": "stream",
-                    "text": chunk,
-                    "raw": True
-                })
+            files, generated_code, syntax_errors = enhanced_streaming_with_validation(chain, state)
+            
+            if syntax_errors:
+                print(f"[code_generation] Syntax errors found: {syntax_errors}")
+                state["warnings"].extend(syntax_errors)
 
         except Exception as e:
             print(f"[code_generation] ⚠️  Streaming error: {e}")
@@ -1558,6 +1171,23 @@ def code_generation_node(state: AgentState) -> AgentState:
         for f in files:
             print(f"[code_generation]   ✅ {f['path']} ({len(f['content'])} chars)")
 
+        # PASTE THIS NEW BLOCK IN ITS PLACE:
+
+        print("[code_generation] 🔬 Applying comprehensive validation and self-correction...")
+        validation_result = validate_and_correct_code(files)  # Use the new function
+
+        state["files"] = validation_result["files"]  # Use the corrected list of files
+        state["warnings"].extend(validation_result["warnings"])
+        state["errors"] = validation_result["errors"]
+
+        if not validation_result["valid"]:
+            print(f"[code_generation] ❌ Validation failed: {validation_result['errors']}")
+        else:
+            print("[code_generation] ✅ Validation and self-correction passed.")
+                
+        if validation_result['warnings']:
+            print(f"[code_generation] ⚠️ Warnings: {validation_result['warnings']}")
+            state["warnings"].extend(validation_result['warnings'])
         send_progress(state["progress_callbacks"], {
             "type": "complete",
             "generated_code": generated_code,
@@ -1585,7 +1215,266 @@ def code_generation_node(state: AgentState) -> AgentState:
         state["warnings"] = [str(e)]
 
     return state
+# Replace the streaming section in code_generation_node with this enhanced version:
 
+def enhanced_streaming_with_validation(chain, state):
+    """Enhanced streaming with real-time syntax validation"""
+    
+    buffer = []
+    files = []
+    current_file_content = []
+    in_file = False
+    current_file_path = ""
+    syntax_errors = []
+    
+    for chunk in chain.stream({
+        "system_prompt": state["system_prompt"],
+        "full_prompt": state["full_prompt"]
+    }):
+        buffer.append(chunk)
+        
+        # Real-time file detection
+        if '<file path="' in chunk and not in_file:
+            in_file = True
+            current_file_content = [chunk]
+            path_match = re.search(r'<file path="([^"]+)"', chunk)
+            if path_match:
+                current_file_path = path_match.group(1)
+                print(f"[streaming] Starting file: {current_file_path}")
+                
+        elif in_file:
+            current_file_content.append(chunk)
+            
+            # Check for file completion
+            if "</file>" in chunk:
+                full_file_content = "".join(current_file_content)
+                file_match = re.search(r'<file path="([^"]+)">(.*?)</file>', full_file_content, re.DOTALL)
+                
+                if file_match:
+                    path, content = file_match.groups()
+                    cleaned_content = sanitize_content_for_utf8(content.strip())
+                    
+                    # REAL-TIME SYNTAX VALIDATION
+                    try:
+    # REAL-TIME SYNTAX VALIDATION
+                        if path.endswith(('.jsx', '.tsx')):
+                            syntax_check = check_jsx_syntax_realtime(cleaned_content, path)
+                            if not syntax_check['valid']:
+                                print(f"[streaming] SYNTAX ERROR in {path}: {syntax_check['errors']}")
+                                syntax_errors.extend(syntax_check['errors'])
+                                # Try to fix syntax issues
+                                cleaned_content = fix_syntax_errors(cleaned_content, syntax_check['errors'])
+                                # Re-validate after fix
+                                recheck = check_jsx_syntax_realtime(cleaned_content, path)
+                                if recheck['valid']:
+                                    print(f"[streaming] ✅ Fixed syntax errors in {path}")
+                    except Exception as e:
+                        print(f"[streaming] Error in syntax validation for {path}: {e}")
+                
+                in_file = False
+                current_file_content = []
+                current_file_path = ""
+        
+        # Send progress
+        send_progress(state["progress_callbacks"], {
+            "type": "stream",
+            "text": chunk,
+            "raw": True
+        })
+    
+    return files, "".join(buffer), syntax_errors
+
+def check_jsx_syntax_realtime(content: str, file_path: str) -> Dict[str, Any]:
+    """Real-time JSX syntax validation"""
+    errors = []
+    
+    # Check quote balance
+    single_quotes = content.count("'") - content.count("\\'")
+    double_quotes = content.count('"') - content.count('\\"')
+    
+    if single_quotes % 2 != 0:
+        errors.append("Unmatched single quotes")
+    if double_quotes % 2 != 0:
+        errors.append("Unmatched double quotes")
+    
+    # Check brace balance
+    open_braces = content.count('{')
+    close_braces = content.count('}')
+    if open_braces != close_braces:
+        errors.append(f"Mismatched braces: {open_braces} open, {close_braces} close")
+    
+    # Check parentheses balance  
+    open_parens = content.count('(')
+    close_parens = content.count(')')
+    if open_parens != close_parens:
+        errors.append(f"Mismatched parentheses: {open_parens} open, {close_parens} close")
+    
+    # Check for smart quotes
+    if '"' in content or '"' in content or ''' in content or ''' in content:
+        errors.append("Contains smart quotes - use straight quotes")
+    
+    # Check for required JSX structure
+    if file_path.endswith('.jsx'):
+        if not re.search(r'function\s+\w+|const\s+\w+\s*=', content):
+            errors.append("Missing component function/const declaration")
+        
+        if 'export default' not in content:
+            errors.append("Missing export default statement")
+        
+        if not re.search(r'return\s*\(', content):
+            errors.append("Missing return statement")
+    
+    return {
+        'valid': len(errors) == 0,
+        'errors': errors
+    }
+
+def fix_syntax_errors(content: str, errors: List[str]) -> str:
+    """Attempt to fix common syntax errors"""
+    
+    for error in errors:
+        if "smart quotes" in error:
+            # Fix smart quotes
+            content = content.replace('"', '"').replace('"', '"')
+            content = content.replace(''', "'").replace(''', "'")
+        
+        elif "Missing export default" in error:
+            # Add export default
+            func_match = re.search(r'function\s+(\w+)', content)
+            if func_match:
+                func_name = func_match.group(1)
+                if f'export default {func_name}' not in content:
+                    content += f'\n\nexport default {func_name}'
+        
+        elif "Missing component function" in error:
+            # This is harder to fix automatically, but we can try
+            if 'function' not in content and 'const' not in content:
+                # Try to extract component name from file path
+                # This would need more sophisticated logic
+                pass
+    
+    return content
+#
+# ❗️ In generate_ai_stream.py, DELETE your old `validate_generated_code` and `fix_generation_errors` functions.
+#    REPLACE them with this new function:
+#
+
+def validate_and_correct_code(files: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Upgraded validation that now performs deep syntax checks and auto-correction.
+    """
+    print("🔬 [Validation v2] Starting comprehensive code validation with syntax checks...")
+    warnings = []
+    errors = []
+
+    for i, file_data in enumerate(files):
+        path = file_data.get('path', 'unknown_file')
+        content = file_data.get('content', '')
+
+        # --- PASS 1: Aggressive Sanitization ---
+        sanitized_content = sanitize_content_for_utf8(content)
+        if sanitized_content != content:
+            warnings.append(f"Sanitized special characters/whitespace in {path}")
+            files[i]['content'] = sanitized_content
+            content = sanitized_content # Use the sanitized content for further checks
+
+        # --- PASS 2: JSX Syntax Auto-Correction (The key fix for your error) ---
+        if path.endswith(".jsx"):
+            # Pattern to find template literals `${...}` inside single or double quoted strings
+            # This is a common LLM error in classNames
+            error_pattern = re.compile(r"""(className=\{)(['"])(.*?\$\{.*?\}.*?)(['"])\}""")
+            
+            # Use a function to replace the quotes with backticks
+            def replacer(match):
+                warnings.append(f"Auto-corrected invalid template literal in className for {path}")
+                # Reconstruct with backticks
+                return f"{match.group(1)}`{match.group(3)}`}}"
+
+            corrected_content, num_replacements = error_pattern.subn(replacer, content)
+
+            if num_replacements > 0:
+                print(f"🔧 [Validation v2] Auto-corrected {num_replacements} invalid template literal(s) in {path}")
+                files[i]['content'] = corrected_content
+                content = corrected_content # Use the corrected content for further checks
+
+    # --- PASS 3: Structural Validation (Imports vs. Files) ---
+    app_file_index = next((i for i, f in enumerate(files) if f['path'].endswith('App.jsx')), -1)
+
+    if app_file_index == -1:
+        errors.append("Validation failed: No App.jsx file was generated.")
+    else:
+        app_content = files[app_file_index]['content']
+        generated_components = {f['path'].split('/')[-1].replace('.jsx', '') for f in files if 'components/' in f['path']}
+        
+        import_pattern = re.compile(r'import\s+(\w+)\s+from\s+[\'"]\./components/(\w+)[\'"];?\n?')
+        imports_found = import_pattern.findall(app_content)
+
+        for component_name, file_name in imports_found:
+            if file_name not in generated_components:
+                warning_msg = f"Correction: Removing import for '{component_name}' from App.jsx because '{file_name}.jsx' was NOT generated."
+                print(f"🔧 [Validation v2] {warning_msg}")
+                warnings.append(warning_msg)
+                
+                # Remove the import line and its JSX usage
+                import_line_pattern = re.compile(r'import\s+{}\s+from\s+[\'"]\./components/{}[\'"];?\n?'.format(re.escape(component_name), re.escape(file_name)))
+                app_content = import_line_pattern.sub('', app_content)
+                usage_pattern = re.compile(r'<{}\s*/>\n?'.format(re.escape(component_name)))
+                app_content = usage_pattern.sub('', app_content)
+        
+        files[app_file_index]['content'] = app_content
+
+    print("✅ [Validation v2] All checks passed or were corrected.")
+    return {'valid': len(errors) == 0, 'files': files, 'errors': errors, 'warnings': warnings}
+
+
+def fix_generation_errors(files: List[Dict[str, str]], errors: List[str]) -> List[Dict[str, str]]:
+    """Attempt to automatically fix common generation errors"""
+    
+    for error in errors:
+        if "missing React import" in error:
+            # Find the file and add React import
+            file_name = error.split()[0].replace('.jsx', '')
+            for file_data in files:
+                if file_data['path'].endswith(f'{file_name}.jsx'):
+                    if 'import React' not in file_data['content']:
+                        file_data['content'] = "import React from 'react'\n\n" + file_data['content']
+        
+        elif "missing export default" in error:
+            # Add missing export default
+            match = re.search(r'(\w+)\.jsx missing export default (\w+)', error)
+            if match:
+                file_name, comp_name = match.groups()
+                for file_data in files:
+                    if file_data['path'].endswith(f'{file_name}.jsx'):
+                        if f'export default {comp_name}' not in file_data['content']:
+                            file_data['content'] += f'\n\nexport default {comp_name}'
+        
+        elif "imports" in error and "not found" in error:
+            # Fix missing component files by creating them
+            match = re.search(r'imports (\w+) but (\w+)\.jsx not found', error)
+            if match:
+                comp_name = match.group(1)
+                # Create a basic component
+                new_component = f'''import React from 'react'
+
+        function {comp_name}() {{
+        return (
+            <div className="p-4">
+            <h2 className="text-xl font-bold">{comp_name} Component</h2>
+            <p>This component was auto-generated to fix import error.</p>
+            </div>
+        )
+        }}
+
+        export default {comp_name}'''
+                
+                files.append({
+                    'path': f'src/components/{comp_name}.jsx',
+                    'content': new_component
+                })
+                print(f"[fix_errors] Created missing component: {comp_name}.jsx")
+            
+    return files
 # -------------------------------------------------------------------
 # Enhanced public API
 # -------------------------------------------------------------------

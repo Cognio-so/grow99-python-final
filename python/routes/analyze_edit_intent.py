@@ -1,4 +1,3 @@
-# Fixed analyze_edit_intent.py - Enhanced file analysis and context building
 
 import os
 import json
@@ -184,166 +183,270 @@ def analyze_existing_files(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
 import asyncio
 
-def determine_edit_strategy(prompt: str, file_analysis: Dict[str, Any]) -> Dict[str, Any]:
-    """Hybrid approach: keyword-first, LLM fallback"""
-    print(f'[determine_edit_strategy] 🤔 Hybrid analysis for: "{prompt}"')
+def _detect_error_in_prompt(prompt: str) -> Dict[str, Any]:
+    """Detect if the prompt contains an error message and extract error details"""
     
     prompt_lower = prompt.lower()
+    
+    # Common error patterns
+    error_patterns = {
+        'react_error': [
+            'plugin:vite:react-babel', 'unexpected token', 'jsx', 'react error',
+            'compilation failed', 'syntax error', 'unclosed', 'missing'
+        ],
+        'import_error': [
+            'cannot resolve', 'module not found', 'failed to resolve import',
+            'import error', 'missing module'
+        ],
+        'vite_error': [
+            'plugin:vite', 'vite error', 'build failed', 'compilation error'
+        ],
+        'general_error': [
+            'error', 'failed', 'exception', 'crash', 'broken'
+        ]
+    }
+    
+    detected_errors = []
+    error_type = 'general_error'
+    
+    # Check for specific error patterns
+    for pattern_name, patterns in error_patterns.items():
+        for pattern in patterns:
+            if pattern in prompt_lower:
+                detected_errors.append({
+                    'type': pattern_name,
+                    'pattern': pattern,
+                    'message': prompt
+                })
+                error_type = pattern_name
+                break
+        if detected_errors:
+            break
+    
+    if detected_errors:
+        return {
+            'is_error': True,
+            'errors': detected_errors,
+            'error_type': error_type,
+            'confidence': 0.9 if error_type != 'general_error' else 0.7
+        }
+    
+    return {
+        'is_error': False,
+        'errors': [],
+        'error_type': None,
+        'confidence': 0.0
+    }
+
+def _extract_error_context(prompt: str, file_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract error context and identify affected files"""
+    
     components = file_analysis.get('components', {})
     
-    # STEP 1: Try keyword-based analysis (fast, reliable)
-    keyword_result = _keyword_analysis(prompt_lower, components)
+    # Enhanced error pattern matching
+    error_patterns = {
+        'app_jsx_error': r'App\.jsx.*?line (\d+)',
+        'syntax_error': r'syntax error|unexpected token',
+        'import_error': r'import.*?error|cannot resolve',
+        'component_error': r'component.*?error'
+    }
     
-    # STEP 2: Check if keyword analysis was confident
-    if keyword_result['confidence'] >= 0.8 and keyword_result['targetFiles']:
-        print(f'[determine_edit_strategy] ✅ Keyword analysis successful (confidence: {keyword_result["confidence"]})')
-        return keyword_result
+    # Extract line numbers and file names from error
+    line_number = None
+    affected_file = None
     
-    # STEP 3: Fall back to LLM analysis for ambiguous cases
-    print(f'[determine_edit_strategy] 🤖 Keyword uncertain (confidence: {keyword_result["confidence"]}), using LLM fallback')
+    for pattern_name, pattern in error_patterns.items():
+        match = re.search(pattern, prompt, re.IGNORECASE)
+        if match:
+            if pattern_name == 'app_jsx_error':
+                line_number = int(match.group(1))
+                affected_file = 'App.jsx'
+            break
+    
+    # Look for file names in the error message
+    mentioned_files = []
+    for comp_name, comp_info in components.items():
+        if isinstance(comp_info, dict):
+            file_name = comp_info.get('name', '')
+            if file_name.lower() in prompt.lower():
+                mentioned_files.append(comp_info['path'])
+    
+    # For syntax errors, prioritize the file mentioned in the error
+    if affected_file:
+        for comp_info in components.values():
+            if isinstance(comp_info, dict) and affected_file in comp_info.get('relativePath', ''):
+                mentioned_files.insert(0, comp_info['path'])
+    
+    error_context = {
+        'affected_files': mentioned_files,
+        'line_number': line_number,
+        'error_details': prompt,
+        'error_type': 'syntax_error' if 'syntax' in prompt.lower() or 'unexpected token' in prompt.lower() else 'general_error'
+    }
+    
+    print(f"[_extract_error_context] 🚨 Error context: {error_context}")
+    return error_context
+
+def determine_edit_strategy(prompt: str, file_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM-only approach for intelligent edit analysis"""
+    print(f'[determine_edit_strategy] 🤖 LLM analysis for: "{prompt}"')
+    
+    # STEP 0: Check if this is an error message
+    error_detection = _detect_error_in_prompt(prompt)
+    if error_detection['is_error']:
+        print(f'[determine_edit_strategy] 🚨 Error detected: {error_detection["error_type"]}')
+        error_context = _extract_error_context(prompt, file_analysis)
+        
+        return {
+            'editType': 'FIX_ISSUE',
+            'targetFiles': error_context['affected_files'] or error_context['likely_components'],
+            'targetSections': ['error_fix'],
+            'preserveExisting': True,
+            'enhanceOnly': False,
+            'confidence': error_detection['confidence'],
+            'reasoning': f"Error fix for: {error_detection['error_type']}",
+            'errorContext': error_context,
+            'isErrorFix': True
+        }
+    
+    components = file_analysis.get('components', {})
+    
+    # Use LLM analysis directly - no keyword fallback
     llm_result = _llm_analysis(prompt, file_analysis, components)
     
-    # Combine results with LLM taking priority
-    return {
-        **keyword_result,
-        **llm_result,
-        'analysisMethod': 'llm_fallback',
-        'keywordConfidence': keyword_result['confidence'],
-        'reasoning': f"Keyword analysis uncertain, LLM analysis: {llm_result.get('reasoning', '')}"
-    }
-
-def _keyword_analysis(prompt_lower: str, components: Dict[str, Any]) -> Dict[str, Any]:
-    """Fast keyword-based analysis"""
-    
-    # Enhanced keyword patterns
-    patterns = {
-        'style_theme': ['style', 'theme', 'color', 'gradient', 'design', 'appearance', 'professional', 'modern', 'dark', 'light'],
-        'header': ['header', 'nav', 'navigation', 'menu', 'logo'],
-        'hero': ['hero', 'landing', 'banner', 'main section'],
-        'footer': ['footer', 'bottom'],
-        'specific_component': ['button', 'form', 'card', 'modal'],
-        'layout': ['layout', 'spacing', 'margin', 'padding', 'responsive'],
-        'add_feature': ['add', 'create', 'new', 'make'],
-        'remove': ['remove', 'delete', 'hide']
-    }
-    
-    # Score each pattern
-    pattern_scores = {}
-    for pattern_name, keywords in patterns.items():
-        score = sum(1 for keyword in keywords if keyword in prompt_lower)
-        if score > 0:
-            pattern_scores[pattern_name] = score
-    
-    # Determine target files based on strongest pattern
-    target_files = []
-    confidence = 0.0
-    edit_type = "UPDATE_STYLE"
-    
-    if not pattern_scores:
-        return {'targetFiles': [], 'confidence': 0.0, 'editType': edit_type}
-    
-    strongest_pattern = max(pattern_scores, key=pattern_scores.get)
-    max_score = pattern_scores[strongest_pattern]
-    
-    # Map patterns to files
-    if strongest_pattern == 'header':
-        target_files = _find_components_by_type(components, ['header', 'nav'])
-        confidence = min(0.9, 0.6 + (max_score * 0.1))
-        edit_type = "UPDATE_COMPONENT"
-        
-    elif strongest_pattern == 'hero':
-        target_files = _find_components_by_type(components, ['hero'])
-        confidence = min(0.9, 0.6 + (max_score * 0.1))
-        edit_type = "UPDATE_COMPONENT"
-        
-    elif strongest_pattern == 'style_theme':
-        # For styling, target visual components
-        target_files = _find_components_by_type(components, ['header', 'hero', 'app'])
-        confidence = min(0.85, 0.5 + (max_score * 0.1))
-        edit_type = "UPDATE_STYLE"
-        
-    elif strongest_pattern == 'add_feature':
-        # For adding features, confidence is lower - often needs LLM
-        target_files = _find_components_by_type(components, ['app'])
-        confidence = 0.4  # Low confidence to trigger LLM
-        edit_type = "ADD_FEATURE"
-        
-    else:
-        # Generic fallback
-        target_files = _find_components_by_type(components, ['app'])
-        confidence = 0.3  # Low confidence
-    
-    return {
-        'editType': edit_type,
-        'targetFiles': target_files,
-        'targetSections': [strongest_pattern],
-        'preserveExisting': strongest_pattern in ['style_theme', 'layout'],
-        'enhanceOnly': strongest_pattern == 'style_theme',
-        'confidence': confidence,
-        'reasoning': f"Keyword pattern: {strongest_pattern} (score: {max_score})"
-    }
-
-def _find_components_by_type(components: Dict[str, Any], types: List[str]) -> List[str]:
-    """Find component files matching the given types"""
-    target_files = []
-    
-    for comp_name, comp_info in components.items():
-        if not isinstance(comp_info, dict):
-            continue
-            
-        comp_name_lower = comp_name.lower()
-        
-        for target_type in types:
-            if target_type in comp_name_lower:
-                target_files.append(comp_info['path'])
-                break
-        
-        # Special checks
-        if 'app' in types and comp_info.get('isMainApp'):
-            target_files.append(comp_info['path'])
-    
-    return target_files
+    print(f'[determine_edit_strategy] ✅ LLM analysis complete (confidence: {llm_result["confidence"]})')
+    return llm_result
 
 def _llm_analysis(prompt: str, file_analysis: Dict[str, Any], components: Dict[str, Any]) -> Dict[str, Any]:
-    """LLM-based analysis for complex cases"""
+    """Enhanced LLM-based analysis with intelligent file targeting"""
     
     file_summary = "\n".join([
-        f"- {comp_info['relativePath']}: {comp_info['name']}" 
+        f"- {comp_info['relativePath']}: {comp_info['name']} ({'Main App' if comp_info.get('isMainApp') else 'Component'})" 
         for comp_name, comp_info in components.items() 
         if isinstance(comp_info, dict)
     ])
     
-    system_prompt = f"""Analyze this edit request for a React app. Be conservative - only target files that DEFINITELY need changes.
+    # Enhanced error detection patterns
+    error_patterns = [
+        'error', 'failed', 'syntax', 'unexpected token', 'cannot resolve', 
+        'compilation failed', 'plugin:vite', 'react-babel', 'module not found',
+        'import', 'export', 'jsx', 'unclosed', 'missing', 'invalid'
+    ]
+    
+    is_error = any(pattern in prompt.lower() for pattern in error_patterns)
+    
+    if is_error:
+        system_prompt = f"""You are an expert React developer analyzing an ERROR MESSAGE. Your job is to identify which files need to be fixed.
 
-Files available:
+ERROR MESSAGE: "{prompt}"
+
+Available files:
+{file_summary}
+
+CRITICAL ERROR ANALYSIS INSTRUCTIONS:
+1. Read the error message carefully
+2. Identify the specific file(s) that contain the error
+3. Determine what type of error it is (syntax, import, JSX, etc.)
+4. Select ONLY the files that need to be modified to fix the error
+5. For syntax errors, include the file mentioned in the error
+6. For import errors, include both the importing file and the missing component
+7. For JSX errors, include the component with the malformed JSX
+
+Return ONLY valid JSON with this exact format:
+{{
+    "editType": "FIX_ISSUE",
+    "targetFiles": ["src/App.jsx", "src/components/Header.jsx"],
+    "reasoning": "Clear explanation of what needs to be fixed and why",
+    "confidence": 0.9,
+    "preserveExisting": true,
+    "enhanceOnly": false
+}}
+
+Return ONLY the JSON, no other text."""
+    else:
+        system_prompt = f"""You are an expert React developer analyzing edit requests. Your job is to intelligently determine which files need to be modified based on the user's request.
+
+Available files:
 {file_summary}
 
 User request: "{prompt}"
 
-Return JSON with:
+CRITICAL RULES:
+1. For styling/theme/color changes: Target components that handle styling
+2. For text/content changes: Target components that likely contain the text
+3. For layout/structure changes: Be conservative and only modify what's necessary
+4. For new features/pages: Include App.jsx for routing AND create new component files
+5. For "create new X page": You MUST include App.jsx for routing AND specify new component files
+6. App.jsx should only be modified for: routing changes, adding new pages, or major structural changes
+
+EXAMPLES:
+- "change theme to dark" → targetFiles: ["Header.jsx", "Hero.jsx"] (components with styling)
+- "create a new pricing page" → targetFiles: ["App.jsx", "src/components/Pricing.jsx"] (routing + new component)
+- "add a contact form" → targetFiles: ["App.jsx", "src/components/Contact.jsx"] (routing + new component)
+- "replace text madam with ashish" → targetFiles: ["Hero.jsx", "About.jsx"] (components with text)
+
+Return ONLY valid JSON with this exact format:
 {{
-    "editType": "UPDATE_STYLE|UPDATE_COMPONENT|ADD_FEATURE",
-    "targetFiles": ["src/App.jsx"],
-    "reasoning": "brief explanation",
-    "confidence": 0.8
+    "editType": "UPDATE_STYLE|UPDATE_COMPONENT|ADD_FEATURE|FIX_ISSUE",
+    "targetFiles": ["src/components/Header.jsx", "src/components/Hero.jsx"],
+    "reasoning": "Clear explanation of why these files were chosen",
+    "confidence": 0.9,
+    "preserveExisting": true,
+    "enhanceOnly": false
 }}
 
-CRITICAL: For styling changes, do NOT include App.jsx unless absolutely necessary."""
+Return ONLY the JSON, no other text."""
 
     try:
         llm = _select_model("openai/gpt-4o-mini")
         response = llm.invoke([{"role": "system", "content": system_prompt}])
         plan_text = response.content if hasattr(response, 'content') else str(response)
         
-        # Extract JSON
+        # Enhanced JSON extraction with multiple fallback methods
         json_text = plan_text.strip()
+        
+        # Method 1: Look for JSON in code blocks
         if '```json' in json_text:
             start = json_text.find('```json') + 7
             end = json_text.find('```', start)
             if end != -1:
                 json_text = json_text[start:end].strip()
+        elif '```' in json_text:
+            # Method 2: Look for any code block
+            start = json_text.find('```') + 3
+            end = json_text.find('```', start)
+            if end != -1:
+                json_text = json_text[start:end].strip()
         
-        llm_plan = json.loads(json_text)
+        # Method 3: Look for JSON object directly
+        if not json_text.startswith('{'):
+            start = json_text.find('{')
+            if start != -1:
+                end = json_text.rfind('}') + 1
+                if end > start:
+                    json_text = json_text[start:end]
+        
+        # Method 4: Clean up common issues
+        json_text = json_text.replace('\n', ' ').replace('\r', ' ')
+        json_text = re.sub(r'\s+', ' ', json_text).strip()
+        
+        try:
+            llm_plan = json.loads(json_text)
+        except json.JSONDecodeError as json_error:
+            print(f"[_llm_analysis] JSON parse error: {json_error}")
+            print(f"[_llm_analysis] Attempted to parse: {json_text[:200]}...")
+            
+            # Try to fix common JSON issues
+            if 'targetFiles' not in json_text:
+                json_text = json_text.replace('"targetfiles"', '"targetFiles"')
+            if 'editType' not in json_text:
+                json_text = json_text.replace('"edittype"', '"editType"')
+            
+            try:
+                llm_plan = json.loads(json_text)
+            except json.JSONDecodeError:
+                print(f"[_llm_analysis] Failed to fix JSON, using fallback")
+                raise json_error
         
         # Convert relative paths to full paths
         target_files = []
@@ -354,36 +457,64 @@ CRITICAL: For styling changes, do NOT include App.jsx unless absolutely necessar
                     break
         
         return {
-            'editType': llm_plan.get("editType", "UPDATE_STYLE"),
+            'editType': llm_plan.get("editType", "FIX_ISSUE" if is_error else "UPDATE_STYLE"),
             'targetFiles': target_files,
             'targetSections': llm_plan.get("targetSections", []), 
-            'preserveExisting': True,
-            'enhanceOnly': llm_plan.get("editType") == "UPDATE_STYLE",
+            'preserveExisting': llm_plan.get("preserveExisting", True),
+            'enhanceOnly': llm_plan.get("enhanceOnly", False),
             'confidence': llm_plan.get("confidence", 0.7),
-            'reasoning': llm_plan.get("reasoning", f"LLM analysis for: {prompt}")
+            'reasoning': llm_plan.get("reasoning", f"LLM analysis for: {prompt}"),
+            'isErrorFix': is_error
         }
         
     except Exception as e:
         print(f"[_llm_analysis] Error: {e}")
-        # Safe fallback
-        app_files = [comp['path'] for comp in components.values() 
-                    if isinstance(comp, dict) and comp.get('isMainApp')]
-        return {
-            'editType': "UPDATE_STYLE",
-            'targetFiles': app_files[:1],
-            'targetSections': [],
-            'preserveExisting': True,
-            'enhanceOnly': True,
-            'confidence': 0.5,
-            'reasoning': f"LLM fallback for: {prompt}"
-        }
+        # Smart fallback based on prompt content
+        if is_error:
+            # For errors, target the main app and components
+            app_files = [comp['path'] for comp in components.values() 
+                        if isinstance(comp, dict) and comp.get('isMainApp')]
+            component_files = [comp['path'] for comp in components.values() 
+                             if isinstance(comp, dict) and not comp.get('isMainApp')]
+            return {
+                'editType': 'FIX_ISSUE',
+                'targetFiles': app_files + component_files[:2],
+                'targetSections': [],
+                'preserveExisting': True,
+                'enhanceOnly': False,
+                'confidence': 0.5,
+                'reasoning': f"Error fix fallback for: {prompt}",
+                'isErrorFix': True
+            }
+        else:
+            # For regular edits, target components only
+            component_files = [comp['path'] for comp in components.values() 
+                             if isinstance(comp, dict) and not comp.get('isMainApp')]
+            return {
+                'editType': 'UPDATE_STYLE',
+                'targetFiles': component_files[:3],
+                'targetSections': [],
+                'preserveExisting': True,
+                'enhanceOnly': True,
+                'confidence': 0.5,
+                'reasoning': f"LLM fallback for: {prompt}",
+                'isErrorFix': False
+            }
+
 def build_edit_context(prompt: str, manifest: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
-    """Build comprehensive edit context"""
+    """Build comprehensive edit context with error handling"""
     print('[build_edit_context] 🔧 Building edit context...')
     
     # Get all existing files for context
     all_files = list(manifest.get('files', {}).keys())
     target_files = strategy['targetFiles']
+    
+    # CRITICAL FIX: Include existing content for target files
+    existing_content = {}
+    for file_path in target_files:
+        if file_path in manifest.get('files', {}):
+            existing_content[file_path] = manifest['files'][file_path].get('content', '')
+            print(f'[build_edit_context] 📄 Loaded existing content for {file_path} ({len(existing_content[file_path])} chars)')
     
     # Include related files as context (not for editing, just for reference)
     context_files = []
@@ -394,14 +525,99 @@ def build_edit_context(prompt: str, manifest: Dict[str, Any], strategy: Dict[str
     # Limit context files to prevent overflow
     context_files = context_files[:3]
     target_sections = strategy.get('targetSections', [])
-    # Build system prompt
-    if strategy['enhanceOnly']:
-        system_prompt = f"""🚨 CRITICAL ENHANCEMENT MODE - PRESERVE ALL EXISTING CONTENT
+    
+    # Build system prompt based on edit type
+    if strategy.get('isErrorFix'):
+        system_prompt = _build_error_fix_prompt(prompt, strategy, target_files, existing_content)
+    elif strategy['enhanceOnly']:
+        system_prompt = _build_enhancement_prompt(prompt, strategy, target_files, target_sections)
+    else:
+        system_prompt = _build_general_edit_prompt(prompt, strategy, target_files, target_sections)
+    
+    edit_context = {
+        'editType': strategy['editType'],
+        'reasoning': strategy['reasoning'],
+        'primaryFiles': target_files,
+        'contextFiles': context_files,
+        'existingContent': existing_content,
+        'preserveExisting': strategy['preserveExisting'],
+        'enhanceOnly': strategy['enhanceOnly'],
+        'targetSections': strategy['targetSections'],
+        'systemPrompt': system_prompt,
+        'isErrorFix': strategy.get('isErrorFix', False),
+        'errorContext': strategy.get('errorContext', {}),
+        'expectedChanges': [
+            'Error fixes and corrections' if strategy.get('isErrorFix') else 'Visual styling improvements' if strategy['enhanceOnly'] else 'Component modifications',
+            f"Changes to: {', '.join(strategy['targetSections']) if strategy['targetSections'] else 'general styling'}"
+        ]
+    }
+    
+    print(f'[build_edit_context] ✅ Context built for {len(target_files)} primary files, {len(context_files)} context files')
+    print(f'[build_edit_context] 📄 Existing content loaded for {len(existing_content)} files')
+    
+    return edit_context
+
+def _build_error_fix_prompt(prompt: str, strategy: Dict[str, Any], target_files: List[str], existing_content: Dict[str, str]) -> str:
+    """Build specialized prompt for error fixing"""
+    
+    error_context = strategy.get('errorContext', {})
+    line_number = error_context.get('line_number')
+    error_type = error_context.get('error_type', 'general_error')
+    
+    # Extract the specific error details
+    error_lines = prompt.split('\n')
+    error_message = error_lines[0] if error_lines else prompt
+    
+    system_prompt = f""" CRITICAL ERROR FIX MODE - FIX THE SPECIFIC SYNTAX ERROR
+
+ERROR MESSAGE: "{error_message}"
+ERROR TYPE: {error_type}
+LINE NUMBER: {line_number if line_number else 'Unknown'}
+AFFECTED FILES: {', '.join([f.split('/')[-1] for f in target_files])}
+
+ ERROR FIX INSTRUCTIONS:
+1. Focus ONLY on fixing the syntax error mentioned in the error message
+2. Look at the specific line number and character position
+3. Fix ONLY the syntax issue - do not change other code
+4. Preserve all existing functionality and content
+5. Ensure the code compiles without errors
+
+🔧 COMMON SYNTAX FIXES:
+- Fix unclosed quotes, brackets, or parentheses
+- Fix malformed JSX attributes
+- Fix invalid CSS class names or URLs
+- Fix import/export syntax
+- Fix component naming issues
+
+❌ DO NOT:
+- Change functionality unrelated to the error
+- Add new features
+- Modify styling unless it's causing the error
+- Remove existing content
+
+CRITICAL: Output ONLY the fixed files. The syntax error must be resolved and the code must compile successfully.
+
+EXISTING CONTENT TO FIX:
+"""
+    
+    # Add the existing content that needs to be fixed
+    for file_path in target_files:
+        file_name = file_path.split('/')[-1]
+        content = existing_content.get(file_path, '')
+        if content:
+            system_prompt += f"\n--- {file_name} ---\n{content}\n"
+    
+    return system_prompt
+
+def _build_enhancement_prompt(prompt: str, strategy: Dict[str, Any], target_files: List[str], target_sections: List[str]) -> str:
+    """Build specialized prompt for enhancement requests"""
+    
+    system_prompt = f"""🚨 CRITICAL ENHANCEMENT MODE - PRESERVE ALL EXISTING CONTENT
 
 USER REQUEST: "{prompt}"
 🎯 EDIT CONTEXT:
 - Edit Type: {strategy.get('editType', 'UPDATE_COMPONENT')}
-- Target Sections: {target_sections}  # Use the safe variable
+- Target Sections: {target_sections}
 - Preserve Existing: {strategy.get('preserveExisting', True)}
 
 🎯 ENHANCEMENT INSTRUCTIONS:
@@ -411,7 +627,7 @@ USER REQUEST: "{prompt}"
 4. DO NOT add new sections or remove existing content
 5. DO NOT change the website's purpose or message
 
-🔧 FILES TO ENHANCE:
+ FILES TO ENHANCE:
 {chr(10).join(f"- {f.split('/')[-1]}" for f in target_files)}
 
 ✅ ALLOWED CHANGES:
@@ -430,8 +646,12 @@ USER REQUEST: "{prompt}"
 
 CRITICAL: Output ONLY the files listed above with enhanced styling. Keep all existing content exactly as is."""
 
-    else:
-        system_prompt = f"""🚨 TARGETED EDIT MODE - MODIFY SPECIFIC COMPONENTS
+    return system_prompt
+
+def _build_general_edit_prompt(prompt: str, strategy: Dict[str, Any], target_files: List[str], target_sections: List[str]) -> str:
+    """Build specialized prompt for general edit requests"""
+    
+    system_prompt = f""" TARGETED EDIT MODE - MODIFY SPECIFIC COMPONENTS
 
 USER REQUEST: "{prompt}"
 
@@ -451,24 +671,7 @@ USER REQUEST: "{prompt}"
 
 CRITICAL: Output ONLY the files listed above with the requested changes."""
     
-    edit_context = {
-        'editType': strategy['editType'],
-        'reasoning': strategy['reasoning'],
-        'primaryFiles': target_files,
-        'contextFiles': context_files,
-        'preserveExisting': strategy['preserveExisting'],
-        'enhanceOnly': strategy['enhanceOnly'],
-        'targetSections': strategy['targetSections'],
-        'systemPrompt': system_prompt,
-        'expectedChanges': [
-            'Visual styling improvements' if strategy['enhanceOnly'] else 'Component modifications',
-            f"Changes to: {', '.join(strategy['targetSections']) if strategy['targetSections'] else 'general styling'}"
-        ]
-    }
-    
-    print(f'[build_edit_context] ✅ Context built for {len(target_files)} primary files, {len(context_files)} context files')
-    
-    return edit_context
+    return system_prompt
 
 def analyze_edit_intent(prompt: str, manifest: Dict[str, Any], model: str = 'openai/gpt-4o-mini') -> Dict[str, Any]:
     try:
@@ -488,7 +691,7 @@ def analyze_edit_intent(prompt: str, manifest: Dict[str, Any], model: str = 'ope
             print('[analyze-edit-intent] ❌ No files found in manifest')
             return {'success': False, 'error': 'No files found in manifest'}
 
-        # Step 2: Determine edit strategy
+        # Step 2: Determine edit strategy (now includes error detection)
         strategy = determine_edit_strategy(prompt, file_analysis)
         
         if not strategy['targetFiles']:
@@ -507,6 +710,9 @@ def analyze_edit_intent(prompt: str, manifest: Dict[str, Any], model: str = 'ope
         print(f'[analyze-edit-intent] 🎯 Will edit {len(edit_context["primaryFiles"])} files:')
         for file_path in edit_context['primaryFiles']:
             print(f'[analyze-edit-intent]   - {file_path.split("/")[-1]}')
+        
+        if strategy.get('isErrorFix'):
+            print(f'[analyze-edit-intent] 🚨 Error fix mode: {strategy.get("reasoning", "")}')
         
         return {
             'success': True, 

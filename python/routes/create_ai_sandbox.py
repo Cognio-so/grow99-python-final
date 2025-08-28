@@ -263,62 +263,87 @@ async def _get_sandbox_id_compat(sandbox):
         info = await sandbox.get_info() if inspect.iscoroutinefunction(sandbox.get_info) else sandbox.get_info()
         return getattr(info, "sandbox_id", None) or getattr(info, "id", None)
     raise AttributeError("Could not determine sandbox ID from SDK object.")
+import threading # <-- 1. Import threading
 
+# ...
+
+# 2. Create a global lock at the top of the file
+_creation_lock = threading.Lock()
 async def _create_and_setup_sandbox() -> Dict[str, Any]:
     """
     Core logic to create, configure, and save a new E2B sandbox.
     This is now reusable and handles the entire setup process.
     """
-    sandbox: Optional[Any] = None
-    try:
-        # Step 1: Clear any old state from the central file.
-        print("[_create_and_setup_sandbox] Clearing any previous sandbox state...")
-        set_sandbox_state(None)
-
-        print("[_create_and_setup_sandbox] Creating new E2B sandbox...")
-        if E2BSandbox is None:
-            raise RuntimeError("E2B Sandbox library is not available or failed to import.")
-
-        api_key = os.getenv("E2B_API_KEY")
-
-        # Check SDK version and handle api_key differently
-        if hasattr(E2BSandbox, "create"):
-            create_fn = getattr(E2BSandbox, "create", None)
-            sandbox = await create_fn(api_key=api_key) if inspect.iscoroutinefunction(create_fn) else create_fn(api_key=api_key)
-        else:
-            sandbox = E2BSandbox(api_key=api_key)
-
-        sandbox_id = await _get_sandbox_id_compat(sandbox)
-        print(f"[_create_and_setup_sandbox] Sandbox created with ID: {sandbox_id}")
-
-        vite_started = await ensure_vite_server(sandbox, sandbox_id)
-        sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
-
-        new_state = {
-            "sandboxId": sandbox_id,
-            "url": sandbox_url,
-            "createdAt": int(time.time() * 1000)
-        }
-        set_sandbox_state(new_state)
-
-        print("[_create_and_setup_sandbox] ✅ SUCCESS: Sandbox state saved centrally!")
+    # 3. Use the lock to ensure only one thread can execute this block at a time
+    with _creation_lock:
+        print("[_create_and_setup_sandbox] Lock acquired. Starting creation process...")
         
-        # Return all necessary data
-        return {
-            "success": True,
-            "sandboxId": sandbox_id,
-            "url": sandbox_url,
-            "message": "Sandbox created with Vite, React, and Tailwind.",
-            "viteRunning": vite_started,
-            "tailwindConfigured": True,
-        }
-    finally:
-        # IMPORTANT: Always close the temporary connection used for setup.
-        if sandbox and hasattr(sandbox, "close"):
-            if inspect.iscoroutinefunction(sandbox.close):
-                await sandbox.close()
+        # Check if a sandbox was created by another thread while this one was waiting
+        from routes.database import get_sandbox_state
+        existing_state = get_sandbox_state()
+        if existing_state and existing_state.get("sandboxId"):
+            # Validate the existing sandbox; if invalid, clear and continue to create a new one
+            try:
+                api_key = os.getenv("E2B_API_KEY")
+                if hasattr(E2BSandbox, "connect"):
+                    maybe_sandbox = E2BSandbox.connect(existing_state["sandboxId"], api_key=api_key)  # type: ignore[attr-defined]
+                else:
+                    maybe_sandbox = E2BSandbox(api_key=api_key)
+                if hasattr(maybe_sandbox, "get_info"):
+                    _ = maybe_sandbox.get_info()
+                print("[_create_and_setup_sandbox] Existing sandbox is valid. Reusing.")
+                return {
+                    "success": True,
+                    **existing_state,
+                    "message": "Sandbox already existed and was validated.",
+                }
+            except Exception as _e:
+                print("[_create_and_setup_sandbox] Existing sandbox invalid/expired. Clearing state and creating a new one...")
+                set_sandbox_state(None)
+
+        sandbox: Optional[Any] = None
+        try:
+            # The rest of your creation logic goes inside the 'with' block
+            print("[_create_and_setup_sandbox] Clearing any previous sandbox state...")
+            set_sandbox_state(None)
+
+            print("[_create_and_setup_sandbox] Creating new E2B sandbox...")
+            if E2BSandbox is None:
+                raise RuntimeError("E2B Sandbox library is not available or failed to import.")
+
+            api_key = os.getenv("E2B_API_KEY")
+
+            if hasattr(E2BSandbox, "create"):
+                create_fn = getattr(E2BSandbox, "create", None)
+                sandbox = await create_fn(api_key=api_key) if inspect.iscoroutinefunction(create_fn) else create_fn(api_key=api_key)
             else:
-                sandbox.close()
+                sandbox = E2BSandbox(api_key=api_key)
+
+            sandbox_id = await _get_sandbox_id_compat(sandbox)
+            print(f"[_create_and_setup_sandbox] Sandbox created with ID: {sandbox_id}")
+            vite_started = await ensure_vite_server(sandbox, sandbox_id)
+            sandbox_url = await get_correct_sandbox_url(sandbox, sandbox_id)
+
+            new_state = {
+                "sandboxId": sandbox_id,
+                "url": sandbox_url,
+                "createdAt": int(time.time() * 1000),
+            }
+            set_sandbox_state(new_state)
+
+            print("[_create_and_setup_sandbox] ✅ SUCCESS: Sandbox state saved centrally!")
+
+            return {
+                "success": True,
+                "sandboxId": sandbox_id,
+                "url": sandbox_url,
+                "message": "Sandbox created with Vite, React, and Tailwind.",
+                "viteRunning": vite_started,
+                "tailwindConfigured": True,
+            }
+        finally:
+            # Do NOT close the sandbox; keep it running
+            print("[_create_and_setup_sandbox] Lock released.")
 
 async def POST() -> Dict[str, Any]:
     """

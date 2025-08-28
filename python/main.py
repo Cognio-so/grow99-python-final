@@ -163,13 +163,18 @@ async def maybe_await(value: Any) -> Any:
 # --- NEW: FastAPI Dependency for Sandbox Management ---
 # In main.py, REPLACE your current get_active_sandbox function with this one.
 
+# In main.py, REPLACE your current get_active_sandbox function with this one.
+
 async def get_active_sandbox() -> Any:
     """
     FastAPI dependency with automatic sandbox recreation on failure.
-    CORRECTED to use .connect() for SDK compatibility.
+    CORRECTED to use .connect() and clear state before recreation.
     """
     if not E2BSandbox:
         raise HTTPException(status_code=500, detail="E2B SDK is not installed on the server.")
+
+    # Import here to avoid circular dependency issues
+    from routes.database import get_sandbox_state, set_sandbox_state
 
     state = get_sandbox_state()
     
@@ -179,27 +184,33 @@ async def get_active_sandbox() -> Any:
         try:
             print(f"[dependency] Attempting to connect to existing sandbox: {sandbox_id}")
             api_key = os.getenv("E2B_API_KEY")
-            print(f"snbox")
             sandbox = E2BSandbox.connect(sandbox_id, api_key=api_key) 
             print(f"[dependency] ✅ Successfully connected to sandbox {sandbox_id}")
             return sandbox
         except Exception as e:
             print(f"[dependency] ⚠️ Sandbox {sandbox_id} connection failed: {e}. It has likely expired.")
+            
+            # --- THIS IS THE CRITICAL FIX ---
+            # Clear the dead sandbox state from the database BEFORE trying to recreate.
+            print(f"[dependency] 🧹 Clearing stale state for dead sandbox: {sandbox_id}")
+            set_sandbox_state(None)
+            # --- END OF FIX ---
+
             print("[dependency] 🚀 Triggering automatic sandbox recreation...")
             # FALLTHROUGH to recreation logic below
     
     # If there was no state OR the connection failed, create a new sandbox.
     try:
+        # NOTE: _create_and_setup_sandbox is an async function
         creation_result = await _create_and_setup_sandbox()
-        if not creation_result.get("success"):
-            # Use the error message from the creation function if available
+
+        if not creation_result or not creation_result.get("success"):
             error_detail = creation_result.get("error", "Failed to automatically recreate sandbox.")
             raise HTTPException(status_code=500, detail=error_detail)
         
         new_sandbox_id = creation_result["sandboxId"]
         print(f"[dependency] 🔄 New sandbox {new_sandbox_id} created. Connecting to finalize...")
         api_key = os.getenv("E2B_API_KEY")
-        # --- FIX 2: Use .connect() here as well ---
         new_sandbox = E2BSandbox.connect(new_sandbox_id, api_key=api_key)
         print(f"[dependency] ✅ Connection to new sandbox successful. Proceeding with request.")
         return new_sandbox
@@ -341,9 +352,10 @@ async def api_sandbox_status():
                 "message": "Sandbox is active."
             })
     except Exception as e:
-        print(f"[sandbox-status] Sandbox {state['sandboxId']} verification failed: {e}")
+        print(f"[sandbox-status] ⚠️ Verification for sandbox {state['sandboxId']} failed: {e}")
         # Clear expired sandbox state
-        set_sandbox_state(None)
+        print(f"[sandbox-status] 🧹 Clearing expired sandbox state from database.")
+        set_sandbox_state(None) # This is the important part
         return CustomJSONResponse({
             "success": True, 
             "active": False, 
